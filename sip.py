@@ -483,9 +483,6 @@ class PhotoView(ui.View):
             self.display_new(self.imgs[self.reletive_position])
             
             
-        
-    
-    
 View = SInteractivePanel() # Make an instance of the main script
 
 View.connect() # Establish connection to NAS
