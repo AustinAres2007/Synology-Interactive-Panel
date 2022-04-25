@@ -7,8 +7,22 @@ Made by Austin Ares,
 PS: Modifications were made to the "nas" module to better support what I am making.
 """
 
+'''
+TODO: 
+    Make files / folders from SiP, (Feature)
+    Open text files (text or source code), (Feature, Done)
+    Get file infomation (Impliment into PhotoView), (Feature, Done)
+    Add keyboard shortcuts for browsing through files, (Feature, Done)
+    
+    - Bugs
+    
+    When logged in with an account that is missing permissions, it returns no graceful error. (Bug, Fixed)
+    When spamming Q or E (To go back a directory, or to go forward) when done enough, SiP will freeze. (Bug, Fixed)
+    when using motion controls with PhotoView, SiP will also respond to these. (Bug)
+'''
+
 import ui
-import console
+import console 
 import os
 import dialogs
 import motion
@@ -17,6 +31,7 @@ import io
 import requests
 
 
+from nas.auth import AuthenticationError
 from requests.exceptions import ConnectionError
 from threading import Thread
 from sys import argv
@@ -35,6 +50,7 @@ folder = ui.Image.named(f'{asset_location}/folder.png')
 file = ui.Image.named(f'{asset_location}/file.png')
 login = ui.Image.named(f'{asset_location}/login.png')
 opt = ui.Image.named(f'{asset_location}/more.png')
+new = ui.Image.named(f'{asset_location}/new.png')
 
 averg = lambda data_set: max(set(data_set), key = data_set.count)
 contents = lambda dir_c: ((file.title, file.subviews[1].title) for file in dir_c)
@@ -48,7 +64,7 @@ font = ('<system>', 17)
 interval = 30
 
 photo_extensions = ['png','jpeg','jpg','heic']
-unicode_file = ['txt', 'py', 'json', 'js', 'c', 'cpp']
+unicode_file = ['txt', 'py', 'json', 'js', 'c', 'cpp', 'csv', 'pdf', 'docx']
 
 def make_buttons(*args):
     for subview in args[2].subviews:
@@ -92,11 +108,12 @@ class SInteractivePanel(ui.View):
             # Define dimentions
             
             self.update_interval = 0.2
+            self.tint_color = file_colour
             motion.start_updates() # Start motion updates for update() to use
             
             self.avg = self.bnts = []
             self.last_folder = None
-            self.is_pointing = self.download = False
+            self.load_buffer = self.is_pointing = self.download = False
             
             # Define the scrollable area, only done on initialisation, when going through folders, it's done in render_view
             
@@ -107,6 +124,7 @@ class SInteractivePanel(ui.View):
             
             # Esablish connection, this will continue until script is closed
             
+            self.right_button_items = [ui.ButtonItem(image=new, tint_color=file_colour, action=lambda _: self.make_media(), enabled=False)]
             files = [[1, file_colour, lambda _:self.render_view, h*1/8, 'Login', login, file_colour, root]]
             
             # What buttons to register on start up, only login for now.
@@ -125,9 +143,23 @@ class SInteractivePanel(ui.View):
         except ConnectionError: # If no connection
             console.alert('No Connection')
     
+    def make_media(self):
+        file_or_folder = console.alert('File or Folder?', '', 'File', 'Folder')
+        name = console.input_alert('Media Name', '')
+        
+        if file_or_folder == 2:
+            self.nas.create_folder(folder_path=self.name, name=name)
+            console.hud_alert(f'Made new folder: {name} at {self.name}')
+        
+        self.render_view(self.name)
+            
+        
     def connect(self):
-        self.nas = filestation.FileStation(argv[1], int(argv[2]), argv[3], argv[4], secure=True, debug=True)
-    
+        try:
+            self.nas = filestation.FileStation(argv[1], int(argv[2]), argv[3], argv[4], secure=True, debug=True)
+        except AuthenticationError:
+            console.alert('Invalid username / password')
+            
     def animation_on(self):
         for x in range(0, 10):
             self.scroll_view.alpha = round(x/10)
@@ -138,58 +170,76 @@ class SInteractivePanel(ui.View):
                 
     @ui.in_background
     def render_view(self, sender):
-        if (isinstance(sender, ui.Button) and (sender.title == 'Login' or sender.image.name.endswith('folder.png'))) or isinstance(sender, str):
-            
-            ui.animate(self.animation_off, 0.3)  
-            path = sender.name if isinstance(sender, ui.Button) else sender
-            
-            contents = self.nas.get_file_list(path)['data']['files']
-            button_metadata = ([0, file_colour, lambda _: self.render_view, h*1/8, item['name'], file if not item['isdir'] else folder, file_colour, item['path']] for item in contents)
-            buttons = make_buttons(button_metadata, self.file_display_formula, self.scroll_view)
-            
-            dir_status = {}
-            for item in contents:
-                dir_status[item['name']] = item['isdir']
-            
-            for ind, bnt in enumerate(buttons):
-                file_lable = ui.Label()
+        if not self.load_buffer and (isinstance(sender, ui.Button) and (sender.title == 'Login' or sender.image.name.endswith('folder.png'))) or isinstance(sender, str):
+            try:
+                self.right_button_items[0].enabled = self.load_buffer = True
+                path = sender.name if isinstance(sender, ui.Button) else sender
                 
-                wdt = ((len(bnt.title) / len(bnt.title)*2.1)) if len(bnt.title) > 8 else (len(bnt.title) / 7)
 
-                self.bnts.append(ui.Button())
+                ui.animate(self.animation_off, 0.3)  
+                contents = self.nas.get_file_list(path)['data']['files']
                 
-                file_lable.text = bnt.title
-                file_lable.x = bnt.width*wdt/10
-                file_lable.y = bnt.height*.65
-                file_lable.alignment = ui.ALIGN_RIGHT
-                file_lable.line_break_mode = ui.LB_TRUNCATE_TAIL                
-                file_lable.font = font
+                button_metadata = ([0, file_colour, lambda _: self.render_view, h*1/8, item['name'], file if not item['isdir'] else folder, file_colour, item['path']] for item in contents)
+                buttons = make_buttons(button_metadata, self.file_display_formula, self.scroll_view)
+                dir_status = {}
                 
-                self.bnts[ind].x = -20
-                self.bnts[ind].y = -35
-                self.bnts[ind].width = self.bnts[ind].height = 100
-                self.bnts[ind].image = opt
-                self.bnts[ind].title = str(dir_status[bnt.title])
-                self.bnts[ind].name = bnt.title
-                self.bnts[ind].action = lambda _: self.context_menu(self.bnts[ind])
+                for item in contents:
+                    dir_status[item['name']] = item['isdir']
                 
-                bnt.add_subview(file_lable)
-                bnt.add_subview(self.bnts[ind])
+                for ind, bnt in enumerate(buttons):
+                    file_lable = ui.Label()
+                    
+                    wdt = ((len(bnt.title) / len(bnt.title)*2.1)) if len(bnt.title) > 8 else (len(bnt.title) / 7)
+        
+                    self.bnts.append(ui.Button())
+                    
+                    file_lable.text = bnt.title
+                    file_lable.x = bnt.width*wdt/10
+                    file_lable.y = bnt.height*.65
+                    file_lable.alignment = ui.ALIGN_RIGHT
+                    file_lable.line_break_mode = ui.LB_TRUNCATE_TAIL                
+                    file_lable.font = font
+                    
+                    self.bnts[ind].x = -20
+                    self.bnts[ind].y = -35
+                    self.bnts[ind].width = self.bnts[ind].height = 100
+                    self.bnts[ind].image = opt
+                    self.bnts[ind].title = str(dir_status[bnt.title])
+                    self.bnts[ind].name = bnt.title
+                    self.bnts[ind].action = lambda _: self.context_menu(self.bnts[ind])
+                    
+                    bnt.add_subview(file_lable)
+                    bnt.add_subview(self.bnts[ind])
+                    
+                    self.scroll_view.add_subview(bnt)
                 
-                self.scroll_view.add_subview(bnt)
-            
-            for o, a in enumerate(self.bnts):
-                a.action = lambda a: self.context_menu(a)    
-                self.scroll_view.subviews[o].add_subview(a)
+                for o, a in enumerate(self.bnts):
+                    a.action = lambda a: self.context_menu(a)    
+                    self.scroll_view.subviews[o].add_subview(a)
+                    
+                i = len(self.scroll_view.subviews)
+                r = round(i/3+i%3)  
                 
-            i = len(self.scroll_view.subviews)
-            r = round(i/3+i%3)  
-            
-            self.scroll_view.content_size = (w, (default_height*r)+((210-default_height)*r)+210)
-            self.name = path
-            
-            ui.animate(self.animation_on, 0.3)
-            self.bnts = []
+                self.scroll_view.content_size = (w, (default_height*r)+((210-default_height)*r)+210)
+                self.name = path
+                
+                
+                ui.animate(self.animation_on, 0.3)
+                self.bnts = []
+                
+            except KeyError:
+                self.load_buffer = False
+                console.hud_alert(f"You're missing permissions, contact NAS Admin for help.", 'error', 3.5)
+            finally:
+                self.load_buffer = False
+                ui.animate(self.animation_on, 0.3)
+    
+    def go_back(self):
+        path = '/'.join(str(self.name).split('/')[:-1])
+        
+        if path:
+            self.last_folder = self.name
+            self.render_view(path)
             
     @ui.in_background
     def update(self):
@@ -197,22 +247,20 @@ class SInteractivePanel(ui.View):
         y = motion.get_attitude()[1]
         
         if y < -0.15 and not self.is_pointing:
-            path = '/'.join(str(self.name).split('/')[:-1])
             self.is_pointing = True
             self.position = 'left'
             
-            if path:
-                self.last_folder = self.name
-                self.render_view(path)
-                        
+            self.go_back()
+              
         elif self.is_pointing and (y < -0.15 or y > 0.18 or i > -0.2):
             self.pointing = False
             
         elif y > 0.18 and not self.is_pointing:
             self.position = 'right'
             if self.last_folder:
+                
                 self.render_view(self.last_folder)
-            
+                
                 self.is_pointing = True
                 self.last_folder = None
             
@@ -227,7 +275,7 @@ class SInteractivePanel(ui.View):
             self.is_pointing = False
 
         
-    def estimate_download(self, sender_data):
+    def estimate_download(self, sender_data) -> int:
         x_old = 0
         data = []
         time = int(interval/5)
@@ -291,7 +339,7 @@ class SInteractivePanel(ui.View):
     @ui.in_background
     def context_menu(self, sender):
         
-        items = ['Download', 'Delete', 'Rename', 'Open'] if not sender.title == 'True' else ['Delete', 'Rename', 'Open']
+        items = ['Download', 'Delete', 'Rename', 'Open', 'Info'] if not sender.title == 'True' else ['Delete', 'Rename', 'Open', 'Info']
         option = dialogs.list_dialog(title=sender.name, items=items)
         
         if option == 'Delete':
@@ -302,16 +350,29 @@ class SInteractivePanel(ui.View):
             self.download_file(sender)
         elif option == 'Open':
             self.open_file(sender)
+        elif option == 'Info':
+            self.get_infomation(sender)
     
+    def get_infomation(self, sender):
+        try:
+            self.nas.start_dir_size_calc(f'{self.name}/{sender.name}')
+            filesize = self.nas.get_dir_status()['data']['total_size']
+            
+            console.alert(f'{sender.name}\n{s(filesize, system=verbose)}\n{self.name}/{sender.name}')
+        except Exception as e:
+            console.alert(e)
+            
+        
     def rename_file(self, sender_data):
         name = str(console.input_alert('Please chose new name.'))
         self.nas.rename_folder(sender_data.name, name)
         
         self.render_view(self.name)
         
+    @ui.in_background    
     def delete_file(self, sender_data):
         console.hud_alert(f'Deleted "{sender_data.name}"')
-        self.nas.start_delete_task(sender_data.name)
+        self.nas.start_delete_task(f'{self.name}/{sender_data.name}')
         
         self.render_view(self.name)
     
@@ -326,7 +387,16 @@ class SInteractivePanel(ui.View):
             console.open_in(path)
         else:
             console.quicklook(path)
-            
+    
+    def get_key_commands(self):
+        return [{'input': 'q'}, {'input': 'e'}]
+    
+    def key_command(self, sender):
+        if sender['input'] == 'q':
+            self.go_back()
+        elif sender['input'] == 'e' and self.last_folder:
+            self.render_view(self.last_folder)
+                                            
     @ui.in_background
     def open_file(self, sender_data):
         try:
@@ -337,19 +407,32 @@ class SInteractivePanel(ui.View):
         finally:
             
             if sender_data.title == 'False':
-                link = self.nas.get_download_url(f'{path}/{sender_data.name}')
                 
-                with open(sender_data.name, 'wb') as file:
-                    with io.BytesIO(requests.get(link).content) as data:
-                        file.write(data.getvalue())
+                link = self.nas.get_download_url(f'{self.name}/{sender_data.name}')
+                file_extension = str(sender_data.name).split('.')[-1].lower() 
                 
-                console.quicklook(sender_data.name)
-                os.remove(sender_data.name)
+                if file_extension in photo_extensions+unicode_file:
+                    
+                    with open(sender_data.name, 'wb') as file:
+                        with io.BytesIO(requests.get(link).content) as data:
+                            file.write(data.getvalue())
+                    
+                    if file_extension in photo_extensions:
+                        console.quicklook(sender_data.name)
+                    else:
+                        console.open_in(sender_data.name)
+                        
+                    os.remove(sender_data.name)
+                    
+                else:
+                    console.alert('Cannot open this file.')
                     
             else:
                 files = self.nas.get_file_list(f'{self.name}/{sender_data.name}')['data']['files']
                 self._files = (file['name'] for file in files if not file['isdir'] and str(file['name'].split('.')[-1]).lower() in photo_extensions)
                 self._s_dir = sender_data.name
+                
+                console.hud_alert("Please Wait...", 'success', 2)
                 PhotoView(main=self).present('full_screen')
 
 
@@ -362,30 +445,35 @@ class PhotoView(ui.View):
         self.main_class = main # Make it so SInteractivePanel (main class) can be refered too
         self.files = [file for file in self.main_class._files] # Make a list of the filenames, from directory we are currently in
         self.reletive_position = 0 # What file we are in currently, will start at the first file of the directory
-        self.imgs = [] # Images to be displayed
         
+        self.loading = False
+        self.imgs = [] # Image Metadata
+        self.filenames = []
         self.flag = False # Flag for scrolling through images
-        default_img = self.get_image(main.nas.get_download_url(f'{main.name}/{main._s_dir}/{self.files[self.reletive_position]}')) # Download first Image to be displayed
+        
+        self.get_image(main.nas.get_download_url(f'{main.name}/{main._s_dir}/{self.files[self.reletive_position]}'),self.files[self.reletive_position]) # Download first Image to be displayed
         self.photo_view = ui.ImageView(image=self.imgs[0], width=710, height=710) # Initialise the ImageView
 
         self.add_subview(self.photo_view) # Add as a subview
         
         for x in range(self.reletive_position+1, len(self.files)): # Iterate for every file in the directory (that is an image)
             try:
-                Thread(target=self.get_image, args=(main.nas.get_download_url(f'{main.name}/{main._s_dir}/{self.files[x]}'),)).start() # Download the Image
+                Thread(target=self.get_image, args=(main.nas.get_download_url(f'{main.name}/{main._s_dir}/{self.files[x]}'), self.files[x],)).start() # Download the Image
             except IndexError: # Dunno why this exception in here, thoughts it may break
                 break
     
-    def get_image(self, url): # Downloads an Image, and saves it to self.imgs to be displayed
+    def get_image(self, url, fn): # Downloads an Image
         
         with io.BytesIO(requests.get(url).content) as b: # Download Image from URL
-            img = ui.Image.from_data(b.getvalue(), 3) # Translate bytes into _ui.Image, as this is what pythonista can display within ImageView
+            img = ui.Image.from_data(b.getvalue(), 3) # Translate bytes into _ui.Image
         
+        self.filenames.append(fn)
         self.imgs.append(img) 
     
     def animation_on_(self): # Turns on the screen, do NOT call directly if you want a smooth transition
         for x in range(0, 10):
             self.photo_view.alpha += .1
+        self.loading = False
             
     def animation_off_(self): # Turns off the screen, do NOT call directly if you want a smooth transition
         for _ in range(10):
@@ -397,9 +485,11 @@ class PhotoView(ui.View):
     def show(self): # Call directly if you want no switch animation, rmember to change self.s_img to a _ui.Image type
         self.photo_view.image = self.s_img
         
-    def display_new(self, img: ui.Image): # Displays images onto screen
-    
+    def display_new(self, img: ui.Image, pos): # Displays images onto screen
+        
+        self.loading = True
         self.s_img = img
+        self.name = self.filenames[pos]
         
         ui.animate(self.animation_off_, .3) # Make PhotoView fully transparent, so the image can change gracefully
         ui.delay(self.show, .3) # Actually display new image
@@ -421,7 +511,7 @@ class PhotoView(ui.View):
                 
                 # If the user tilts the device left (from landscape)
                 
-                self.display_new(self.imgs[self.reletive_position-1]) # Display leftmost image from the list
+                self.display_new(self.imgs[self.reletive_position-1], self.reletive_position-1) # Display leftmost image from the list
                 self.reletive_position -= 1
                 self.flag = True
                 
@@ -429,7 +519,7 @@ class PhotoView(ui.View):
                 
                 # If the user tilts the device right (from landscape)
                 
-                self.display_new(self.imgs[self.reletive_position+1]) # Display rightmost image from the list
+                self.display_new(self.imgs[self.reletive_position+1], self.reletive_position+1) # Display rightmost image from the list
                 self.reletive_position += 1
                 self.flag = True 
                 
@@ -444,30 +534,31 @@ class PhotoView(ui.View):
             
             # If user reaches end of the list of photos, wrap around to first image
             self.reletive_position = 0
-            self.display_new(self.imgs[self.reletive_position])
+            self.display_new(self.imgs[self.reletive_position], 0)
             
     
     def get_key_commands(self):
-        return [{'input': 'right'}, {'input': 'left'}, {'input': 's'}] # Which shortcuts are allowed
+        return [{'input': 'right'}, {'input': 'left'}, {'input': 's'}, {'input': 'x', 'modifiers': 'cmd'}] # Which shortcuts are allowed
     
     def key_command(self, sender):
         try:
+
             # Handles keyboard input, which was defined in the class method get_key_commands
-            if sender['input'] == 'right':            
+            if sender['input'] == 'right' and not self.loading:            
                 
                 # If the user presses the right arrow key, show image to the right of the list
-                self.display_new(self.imgs[self.reletive_position+1])
+                self.display_new(self.imgs[self.reletive_position+1], self.reletive_position+1)
                 self.reletive_position += 1
                 
-            elif sender['input'] == 'left':
+            elif sender['input'] == 'left' and not self.loading:
                 
                 # If the user presses the left arrow key, show image to the left of the list
-                self.display_new(self.imgs[self.reletive_position-1])
+                self.display_new(self.imgs[self.reletive_position-1], self.reletive_position-1)
                 self.reletive_position -= 1
                 
-            elif sender['input'] == 's':
+            elif sender['input'] == 's' and not self.loading:
                 # Handles letter "s" shortcut
-                filename = f'{self.files[self.reletive_position]}.png' # Get name of file that is being displayed
+                filename = f'{self.filenames[self.reletive_position]}.png' # Get name of file that is being displayed
                 
                 # Write a file where the image can be quicklooked
                 with open(filename, 'wb') as tmp_file:
@@ -475,13 +566,16 @@ class PhotoView(ui.View):
                 
                 console.quicklook(filename) # Display image
                 os.remove(filename) # Remove temp file
+                
+            elif sender['input'] == 'x' and sender['modifiers'] == 'cmd':
+                self.close()
+                
                     
         except IndexError:
             
             # If user reaches end of the list of photos, wrap around to first image
             self.reletive_position = 0
-            self.display_new(self.imgs[self.reletive_position])
-            
+            self.display_new(self.imgs[self.reletive_position], 0)
             
 View = SInteractivePanel() # Make an instance of the main script
 
