@@ -18,7 +18,7 @@ TODO:
     
     When logged in with an account that is missing permissions, it returns no graceful error. (Bug, Fixed)
     When spamming Q or E (To go back a directory, or to go forward) when done enough, SiP will freeze. (Bug, Fixed)
-    when using motion controls with PhotoView, SiP will also respond to these. (Bug)
+    when using motion controls with PhotoView, SiP will also respond to these. (Bug, Fixed)
 '''
 
 import ui
@@ -111,9 +111,10 @@ class SInteractivePanel(ui.View):
             self.tint_color = file_colour
             motion.start_updates() # Start motion updates for update() to use
             
+            
             self.avg = self.bnts = []
             self.last_folder = None
-            self.load_buffer = self.is_pointing = self.download = False
+            self.photoview = self.load_buffer = self.is_pointing = self.download = False
             
             # Define the scrollable area, only done on initialisation, when going through folders, it's done in render_view
             
@@ -146,11 +147,21 @@ class SInteractivePanel(ui.View):
     def make_media(self):
         file_or_folder = console.alert('File or Folder?', '', 'File', 'Folder')
         name = console.input_alert('Media Name', '')
+        print(file_or_folder)
         
         if file_or_folder == 2:
             self.nas.create_folder(folder_path=self.name, name=name)
             console.hud_alert(f'Made new folder: {name} at {self.name}')
-        
+        else:
+            text = dialogs.text_dialog(name)
+            with open(name, 'w+') as tmp_file:
+                tmp_file.write(text)
+            
+            self.nas.upload_file(self.name, name)
+            os.remove(name)
+            
+            console.hud_alert('Uploaded Successfully')
+            
         self.render_view(self.name)
             
         
@@ -170,7 +181,7 @@ class SInteractivePanel(ui.View):
                 
     @ui.in_background
     def render_view(self, sender):
-        if not self.load_buffer and (isinstance(sender, ui.Button) and (sender.title == 'Login' or sender.image.name.endswith('folder.png'))) or isinstance(sender, str):
+        if not self.load_buffer and not self.photoview and (isinstance(sender, ui.Button) and (sender.title == 'Login' or sender.image.name.endswith('folder.png'))) or isinstance(sender, str) :
             try:
                 self.right_button_items[0].enabled = self.load_buffer = True
                 path = sender.name if isinstance(sender, ui.Button) else sender
@@ -338,20 +349,21 @@ class SInteractivePanel(ui.View):
     
     @ui.in_background
     def context_menu(self, sender):
+        if not self.photoview:
+            items = ['Download', 'Delete', 'Rename', 'Open', 'Info'] if not sender.title == 'True' else ['Delete', 'Rename', 'Open', 'Info']
+            option = dialogs.list_dialog(title=sender.name, items=items)
         
-        items = ['Download', 'Delete', 'Rename', 'Open', 'Info'] if not sender.title == 'True' else ['Delete', 'Rename', 'Open', 'Info']
-        option = dialogs.list_dialog(title=sender.name, items=items)
         
-        if option == 'Delete':
-            self.delete_file(sender)
-        elif option == 'Rename':
-            self.rename_file(sender)
-        elif option == 'Download':
-            self.download_file(sender)
-        elif option == 'Open':
-            self.open_file(sender)
-        elif option == 'Info':
-            self.get_infomation(sender)
+            if option == 'Delete':
+                self.delete_file(sender)
+            elif option == 'Rename':
+                self.rename_file(sender)
+            elif option == 'Download':
+                self.download_file(sender)
+            elif option == 'Open':
+                self.open_file(sender)
+            elif option == 'Info':
+                self.get_infomation(sender)
     
     def get_infomation(self, sender):
         try:
@@ -433,6 +445,8 @@ class SInteractivePanel(ui.View):
                 self._s_dir = sender_data.name
                 
                 console.hud_alert("Please Wait...", 'success', 2)
+                
+                self.photoview = True
                 PhotoView(main=self).present('full_screen')
 
 
@@ -576,6 +590,10 @@ class PhotoView(ui.View):
             # If user reaches end of the list of photos, wrap around to first image
             self.reletive_position = 0
             self.display_new(self.imgs[self.reletive_position], 0)
+    
+    def will_close(self):
+        print('exit')
+        self.main_class.photoview = False
             
 View = SInteractivePanel() # Make an instance of the main script
 
