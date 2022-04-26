@@ -7,7 +7,7 @@ A small rundown for anyone who stumbles across this:
 
 Made for Pythonista, programmed on an iPad Pro 11" and NOT tested on another model.
 
-Can view files, folders, and images, working on viewing files.
+Can view files, folders, and images, (PNG, JPG, TXT, CPP, C, JS, HEIC)
 
 To connect to your own NAS, in the file arguments (Run Options) in pythonista, use this format:
 
