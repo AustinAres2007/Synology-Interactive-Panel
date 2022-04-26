@@ -9,7 +9,7 @@ PS: Modifications were made to the "nas" module to better support what I am maki
 
 '''
 TODO: 
-    Make files / folders from SiP, (Feature)
+    Make files / folders from SiP, (Feature, Done)
     Open text files (text or source code), (Feature, Done)
     Get file infomation (Impliment into PhotoView), (Feature, Done)
     Add keyboard shortcuts for browsing through files, (Feature, Done)
