@@ -13,12 +13,14 @@ TODO:
     Open text files (text or source code), (Feature, Done)
     Get file infomation (Impliment into PhotoView), (Feature, Done)
     Add keyboard shortcuts for browsing through files, (Feature, Done)
+    Make digital buttons for browsing through directories (Feature)
     
     - Bugs
     
     When logged in with an account that is missing permissions, it returns no graceful error. (Bug, Fixed)
     When spamming Q or E (To go back a directory, or to go forward) when done enough, SiP will freeze. (Bug, Fixed)
     when using motion controls with PhotoView, SiP will also respond to these. (Bug, Fixed)
+    
 '''
 
 import ui
@@ -26,7 +28,6 @@ import console
 import os
 import dialogs
 import motion
-import threading
 import io
 import requests
 
@@ -41,16 +42,10 @@ from hurry.filesize import size as s
 from hurry.filesize import verbose
 
 
-w,h = ui.get_screen_size()
+w, h = ui.get_screen_size()
 root = argv[5]
 
 asset_location = './assets'
-
-folder = ui.Image.named(f'{asset_location}/folder.png')
-file = ui.Image.named(f'{asset_location}/file.png')
-login = ui.Image.named(f'{asset_location}/login.png')
-opt = ui.Image.named(f'{asset_location}/more.png')
-new = ui.Image.named(f'{asset_location}/new.png')
 
 averg = lambda data_set: max(set(data_set), key = data_set.count)
 contents = lambda dir_c: ((file.title, file.subviews[1].title) for file in dir_c)
@@ -63,7 +58,20 @@ spacing = 70
 font = ('<system>', 17)
 interval = 30
 
-photo_extensions = ['png','jpeg','jpg','heic']
+assets = {
+    'folder': ui.Image.named(f'{asset_location}/folder.png'),
+    'file': ui.Image.named(f'{asset_location}/file.png'),
+    'login': ui.Image.named(f'{asset_location}/login.png'),
+    'opt': ui.Image.named(f'{asset_location}/more.png'),
+    'new': ui.Image.named(f'{asset_location}/new.png'),
+    'video': ui.Image.named(f'{asset_location}/video.png'),
+    'photo': ui.Image.named(f'{asset_location}/photo.png'),
+    'audio': ui.Image.named(f'{asset_location}/audio.png')
+}
+
+audio_extensions = ['ogg', 'mp3', 'flac', 'alac', 'mp2', 'wav']
+video_extensions = ['mov', 'mp4', 'mkv']
+photo_extensions = ['png','jpeg','jpg','heic', 'gif']
 unicode_file = ['txt', 'py', 'json', 'js', 'c', 'cpp', 'csv', 'pdf', 'docx']
 
 def make_buttons(*args):
@@ -125,13 +133,10 @@ class SInteractivePanel(ui.View):
             
             # Esablish connection, this will continue until script is closed
             
-            self.right_button_items = [ui.ButtonItem(image=new, tint_color=file_colour, action=lambda _: self.make_media(), enabled=False)]
-            files = [[1, file_colour, lambda _:self.render_view, h*1/8, 'Login', login, file_colour, root]]
+            self.right_button_items = [ui.ButtonItem(image=assets['new'], tint_color=file_colour, action=lambda _: self.make_media(), enabled=False)]
+            files = [[1, file_colour, lambda _:self.render_view, h*1/8, 'Login', assets['login'], file_colour, root]]
             
             # What buttons to register on start up, only login for now.
-            button_contants = [
-                [1, 'black', lambda  _:self.render_view, h*1/8, 'Test', (self.x-100, self.y-100, 1, 1),None, file_colour, 'Test']
-            ]
             
             buttons = make_buttons(files, self.file_display_formula, self.scroll_view)
             self.scroll_view.content_size = (w, (210*round((len(files)/2)))+spacing) # Actual scrollable size definition
@@ -190,7 +195,7 @@ class SInteractivePanel(ui.View):
                 ui.animate(self.animation_off, 0.3)  
                 contents = self.nas.get_file_list(path)['data']['files']
                 
-                button_metadata = ([0, file_colour, lambda _: self.render_view, h*1/8, item['name'], file if not item['isdir'] else folder, file_colour, item['path']] for item in contents)
+                button_metadata = ([0, file_colour, lambda _: self.render_view, h*1/8, item['name'], assets['folder'] if item['isdir'] else (assets['file'] if item['name'].split('.')[-1].lower() in unicode_file else (assets['photo'] if item['name'].split('.')[-1].lower() in photo_extensions else (assets['video'] if item['name'].split('.')[-1].lower() in video_extensions else (assets['audio'] if item['name'].split('.')[-1].lower() in audio_extensions else assets['file'])))), file_colour, item['path']] for item in contents)
                 buttons = make_buttons(button_metadata, self.file_display_formula, self.scroll_view)
                 dir_status = {}
                 
@@ -214,7 +219,7 @@ class SInteractivePanel(ui.View):
                     self.bnts[ind].x = -20
                     self.bnts[ind].y = -35
                     self.bnts[ind].width = self.bnts[ind].height = 100
-                    self.bnts[ind].image = opt
+                    self.bnts[ind].image = assets['opt']
                     self.bnts[ind].title = str(dir_status[bnt.title])
                     self.bnts[ind].name = bnt.title
                     self.bnts[ind].action = lambda _: self.context_menu(self.bnts[ind])
@@ -412,7 +417,6 @@ class SInteractivePanel(ui.View):
     @ui.in_background
     def open_file(self, sender_data):
         try:
-            path = self.name
             os.mkdir('output')
         except FileExistsError:
             pass
@@ -442,18 +446,26 @@ class SInteractivePanel(ui.View):
             else:
                 files = self.nas.get_file_list(f'{self.name}/{sender_data.name}')['data']['files']
                 self._files = (file['name'] for file in files if not file['isdir'] and str(file['name'].split('.')[-1]).lower() in photo_extensions)
+                
+                c = (file['name'] for file in files if not file['isdir'] and str(file['name'].split('.')[-1]).lower() in photo_extensions)
+                c = [item for item in c]
+                
                 self._s_dir = sender_data.name
                 
-                console.hud_alert("Please Wait...", 'success', 2)
-                
-                self.photoview = True
-                PhotoView(main=self).present('full_screen')
+                if bool(c):
+                    console.hud_alert("Please Wait...", 'success', 2)
+            
+                    self.photoview = True
+                    PhotoView(main=self).present('full_screen')
+                else:
+                    console.hud_alert("No images to display.", 'error', 2)
+
+                    
 
 
 # PhotoView class: only used when opening a folder
 class PhotoView(ui.View):
     def __init__(self, main: SInteractivePanel): # Initialise PhotoView
-        
         
         self.update_interval = 0.1 # Call class mathod update every tenth of a second
         self.main_class = main # Make it so SInteractivePanel (main class) can be refered too
@@ -592,7 +604,6 @@ class PhotoView(ui.View):
             self.display_new(self.imgs[self.reletive_position], 0)
     
     def will_close(self):
-        print('exit')
         self.main_class.photoview = False
             
 View = SInteractivePanel() # Make an instance of the main script
