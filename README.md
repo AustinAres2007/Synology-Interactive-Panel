@@ -7,7 +7,7 @@ A small rundown for anyone who stumbles across this:
 
 Made for Pythonista, programmed on an iPad Pro 11" and NOT tested on another model.
 
-Can view files, folders, and images, (PNG, JPG, TXT, CPP, C, JS, HEIC)
+Can view files, folders, and images.
 
 To connect to your own NAS, in the file arguments (Run Options) in pythonista, use this format:
 
@@ -20,7 +20,7 @@ To connect to your own NAS, in the file arguments (Run Options) in pythonista, u
 
 
 
-PS: Because I am too lazy to program a back button, tilt your device to the left to go back to the last directory.
+PS: Because I am too lazy to program a back button, tilt your device to the left to go back to the last directory. Or use arrow keys if using a magic keyboard / hardware keyboard
   
   Made by Austin Ares (Austin Ares#2263 on Discord)
   "nas" module made by https://github.com/N4S4/ on GitHub, but edited by me to fit my needs, go check them out.
