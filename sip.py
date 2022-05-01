@@ -13,13 +13,17 @@ TODO:
     Open text files (text or source code), (Feature, Done)
     Get file infomation (Impliment into PhotoView), (Feature, Done)
     Add keyboard shortcuts for browsing through files, (Feature, Done)
-    Make digital buttons for browsing through directories (Feature)
+    Add proper login form (Feature, Done)
+    Make digital buttons for browsing through directories (Feature, Done)
+    Be able to import photos / files from the camera roll and iCloud (Feature)
     
     - Bugs
     
     When logged in with an account that is missing permissions, it returns no graceful error. (Bug, Fixed)
     When spamming Q or E (To go back a directory, or to go forward) when done enough, SiP will freeze. (Bug, Fixed)
-    when using motion controls with PhotoView, SiP will also respond to these. (Bug, Fixed)
+    When using motion controls with PhotoView, SiP will also respond to these. (Bug, Fixed)
+    When renaming a file, any file, SiP will freeze. (Bug, Fixed)
+    Cannot open PDF files. (Bug, Fixed)
     
 '''
 
@@ -35,44 +39,78 @@ import requests
 from nas.auth import AuthenticationError
 from requests.exceptions import ConnectionError
 from threading import Thread
-from sys import argv
+from sys import argv, exit
 from nas import filestation
 from time import sleep
 from hurry.filesize import size as s
 from hurry.filesize import verbose
 
-
 w, h = ui.get_screen_size()
-root = argv[5]
+file_colour = 'black'
 
+if len(argv) >= 5:
+    
+    url = argv[1]
+    port = argv[2]
+    user = argv[3]
+    passw = argv[4]
+    root = argv[5]
+    
+else:
+    
+    fields = [
+        {'type': 'url', 'key': 'nas-url', 'title': 'Synology URL  ', 'placeholder': 'example.synology.me', 'tint_color': 'black'},
+        {'type': 'number', 'key': 'nas-port', 'value': '5001', 'title': 'Synology Port     ', 'placeholder': '5001', 'tint_color': file_colour},
+        {'type': 'text', 'key': 'nas-user', 'title': 'Synology User   ', 'placeholder': 'Username', 'tint_color': file_colour},
+        {'type': 'password', 'key': 'nas-password', 'title': 'Username Pass     ', 'placeholder': 'Password', 'tint_color': file_colour},
+        {'type': 'text', 'key': 'nas-root', 'title': 'Synology Root     ', 'placeholder': 'Root directory', 'tint_color': file_colour}   
+    ]
+    
+    login_form = dialogs.form_dialog(title='Login', fields=fields)
+    
+    if login_form:
+        try:
+            url = login_form['nas-url']
+            port = int(login_form['nas-port'])
+            user = login_form['nas-user']
+            passw = login_form['nas-password']
+            root = login_form['nas-root']
+            
+            if (url and port and user and passw and root):
+                pass
+            else:
+                console.hud_alert('One or more of the fields are empty.', 'error'); exit(1)
+                
+        except ValueError:
+            console.hud_alert('The port contains a character.', 'error'); exit(1)
+    else:
+        exit(0)
+    
 asset_location = './assets'
 
 averg = lambda data_set: max(set(data_set), key = data_set.count)
 contents = lambda dir_c: ((file.title, file.subviews[1].title) for file in dir_c)
     
 blunt = False
-file_colour = 'black'
 default_width = w*1/7
 default_height = h*1/5
 spacing = 70
-font = ('<system>', 17)
+font = ('Chalkduster', 16)
 interval = 30
 
-assets = {
-    'folder': ui.Image.named(f'{asset_location}/folder.png'),
-    'file': ui.Image.named(f'{asset_location}/file.png'),
-    'login': ui.Image.named(f'{asset_location}/login.png'),
-    'opt': ui.Image.named(f'{asset_location}/more.png'),
-    'new': ui.Image.named(f'{asset_location}/new.png'),
-    'video': ui.Image.named(f'{asset_location}/video.png'),
-    'photo': ui.Image.named(f'{asset_location}/photo.png'),
-    'audio': ui.Image.named(f'{asset_location}/audio.png')
-}
+picker = 'black'
+assets = {}
+
+for file in os.listdir(asset_location):
+    fd = file.split('.')
+    if fd[-1] == 'png':
+        assets[fd[0]] = ui.Image.named(f'{asset_location}/{file}')
 
 audio_extensions = ['ogg', 'mp3', 'flac', 'alac', 'mp2', 'wav']
 video_extensions = ['mov', 'mp4', 'mkv']
 photo_extensions = ['png','jpeg','jpg','heic', 'gif']
-unicode_file = ['txt', 'py', 'json', 'js', 'c', 'cpp', 'csv', 'pdf', 'docx']
+unicode_file = ['txt', 'py', 'json', 'js', 'c', 'cpp']
+special_extensions = ['csv', 'pdf', 'docx']
 
 def make_buttons(*args):
     for subview in args[2].subviews:
@@ -121,7 +159,7 @@ class SInteractivePanel(ui.View):
             
             
             self.avg = self.bnts = []
-            self.last_folder = None
+            self.nas = self.last_folder = None
             self.photoview = self.load_buffer = self.is_pointing = self.download = False
             
             # Define the scrollable area, only done on initialisation, when going through folders, it's done in render_view
@@ -133,19 +171,12 @@ class SInteractivePanel(ui.View):
             
             # Esablish connection, this will continue until script is closed
             
-            self.right_button_items = [ui.ButtonItem(image=assets['new'], tint_color=file_colour, action=lambda _: self.make_media(), enabled=False)]
-            files = [[1, file_colour, lambda _:self.render_view, h*1/8, 'Login', assets['login'], file_colour, root]]
+            self.left_button_items = [ui.ButtonItem(image=ui.Image.named('iob:chevron_left_32'), tint_color=file_colour, action=lambda _: self.go_back(), enabled=True)]
             
-            # What buttons to register on start up, only login for now.
-            
-            buttons = make_buttons(files, self.file_display_formula, self.scroll_view)
-            self.scroll_view.content_size = (w, (210*round((len(files)/2)))+spacing) # Actual scrollable size definition
-            
-            for bnt in buttons: # Add the buttons (Again, only the login button)
-                self.scroll_view.add_subview(bnt) 
+            self.right_button_items = [ui.ButtonItem(image=ui.Image.named('typb:Write'), tint_color=file_colour, action=lambda _: self.make_media(), enabled=False)]
             
             self.add_subview(self.scroll_view) # Display the files in the root
-            
+            self.render_view(root)
         except ConnectionError: # If no connection
             console.alert('No Connection')
     
@@ -172,9 +203,11 @@ class SInteractivePanel(ui.View):
         
     def connect(self):
         try:
-            self.nas = filestation.FileStation(argv[1], int(argv[2]), argv[3], argv[4], secure=True, debug=True)
+            self.nas = filestation.FileStation(url, port, user, passw, secure=True, debug=True)
         except AuthenticationError:
-            console.alert('Invalid username / password')
+            return console.alert('Invalid username / password')
+        except ConnectionError:
+            return console.alert('No Internet connection')
             
     def animation_on(self):
         for x in range(0, 10):
@@ -191,10 +224,12 @@ class SInteractivePanel(ui.View):
                 self.right_button_items[0].enabled = self.load_buffer = True
                 path = sender.name if isinstance(sender, ui.Button) else sender
                 
-
-                ui.animate(self.animation_off, 0.3)  
-                contents = self.nas.get_file_list(path)['data']['files']
-                
+                try:
+                    ui.animate(self.animation_off, 0.3)  
+                    contents = self.nas.get_file_list(path)['data']['files']
+                except AttributeError:
+                    return console.alert('No connection to NAS, typo?')
+                    
                 button_metadata = ([0, file_colour, lambda _: self.render_view, h*1/8, item['name'], assets['folder'] if item['isdir'] else (assets['file'] if item['name'].split('.')[-1].lower() in unicode_file else (assets['photo'] if item['name'].split('.')[-1].lower() in photo_extensions else (assets['video'] if item['name'].split('.')[-1].lower() in video_extensions else (assets['audio'] if item['name'].split('.')[-1].lower() in audio_extensions else assets['file'])))), file_colour, item['path']] for item in contents)
                 buttons = make_buttons(button_metadata, self.file_display_formula, self.scroll_view)
                 dir_status = {}
@@ -382,8 +417,10 @@ class SInteractivePanel(ui.View):
         
     def rename_file(self, sender_data):
         name = str(console.input_alert('Please chose new name.'))
-        self.nas.rename_folder(sender_data.name, name)
+        print(f'{self.name}/{sender_data.name}', name)
         
+        self.nas.rename_folder(f'{self.name}/{sender_data.name}', name)
+    
         self.render_view(self.name)
         
     @ui.in_background    
@@ -427,16 +464,17 @@ class SInteractivePanel(ui.View):
                 link = self.nas.get_download_url(f'{self.name}/{sender_data.name}')
                 file_extension = str(sender_data.name).split('.')[-1].lower() 
                 
-                if file_extension in photo_extensions+unicode_file:
+                if file_extension in photo_extensions+unicode_file+special_extensions:
                     
                     with open(sender_data.name, 'wb') as file:
                         with io.BytesIO(requests.get(link).content) as data:
                             file.write(data.getvalue())
-                    
-                    if file_extension in photo_extensions:
+                
+                    if file_extension in photo_extensions+special_extensions:
                         console.quicklook(sender_data.name)
                     else:
-                        console.open_in(sender_data.name)
+                        with open(sender_data.name, 'r') as r_file:
+                            dialogs.text_dialog(title=sender_data.name, text=r_file.read())
                         
                     os.remove(sender_data.name)
                     
@@ -445,9 +483,9 @@ class SInteractivePanel(ui.View):
                     
             else:
                 files = self.nas.get_file_list(f'{self.name}/{sender_data.name}')['data']['files']
-                self._files = (file['name'] for file in files if not file['isdir'] and str(file['name'].split('.')[-1]).lower() in photo_extensions)
+                self._files = (file['name'] for file in files if not file['isdir'] and str(file['name'].split('.')[-1]).lower() in photo_extensions+special_extensions)
                 
-                c = (file['name'] for file in files if not file['isdir'] and str(file['name'].split('.')[-1]).lower() in photo_extensions)
+                c = (file['name'] for file in files if not file['isdir'] and str(file['name'].split('.')[-1]).lower() in photo_extensions+special_extensions)
                 c = [item for item in c]
                 
                 self._s_dir = sender_data.name
@@ -609,4 +647,4 @@ class PhotoView(ui.View):
 View = SInteractivePanel() # Make an instance of the main script
 
 View.connect() # Establish connection to NAS
-View.present('full_screen') # Display initialised screen content
+View.present('full_screen', hide_close_button=True) # Display initialised screen content
