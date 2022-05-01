@@ -183,7 +183,6 @@ class SInteractivePanel(ui.View):
     def make_media(self):
         file_or_folder = console.alert('File or Folder?', '', 'File', 'Folder')
         name = console.input_alert('Media Name', '')
-        print(file_or_folder)
         
         if file_or_folder == 2:
             self.nas.create_folder(folder_path=self.name, name=name)
