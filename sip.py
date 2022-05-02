@@ -9,6 +9,9 @@ PS: Modifications were made to the "nas" module to better support what I am maki
 
 '''
 TODO: 
+    
+    - Features / Changes
+    
     Make files / folders from SiP, (Feature, Done)
     Open text files (text or source code), (Feature, Done)
     Get file infomation (Impliment into PhotoView), (Feature, Done)
@@ -16,6 +19,9 @@ TODO:
     Add proper login form (Feature, Done)
     Make digital buttons for browsing through directories (Feature, Done)
     Be able to import photos / files from the camera roll and iCloud (Feature)
+    Open file by default when tapping on it (Change, Done)
+    When going into more options on a folder and tapping "Open" just open the folder, don't return an error (Change, Done)
+    When opening an empty directory, there is no indication that the folder is empty, and could be mistaken that SiP has crashed (Change, Done)
     
     - Bugs
     
@@ -59,7 +65,7 @@ if len(argv) >= 5:
 else:
     
     fields = [
-        {'type': 'url', 'key': 'nas-url', 'title': 'Synology URL  ', 'placeholder': 'example.synology.me', 'tint_color': 'black'},
+        {'type': 'url', 'key': 'nas-url', 'title': 'Synology URL  ', 'placeholder': 'example.synology.me', 'tint_color': file_colour},
         {'type': 'number', 'key': 'nas-port', 'value': '5001', 'title': 'Synology Port     ', 'placeholder': '5001', 'tint_color': file_colour},
         {'type': 'text', 'key': 'nas-user', 'title': 'Synology User   ', 'placeholder': 'Username', 'tint_color': file_colour},
         {'type': 'password', 'key': 'nas-password', 'title': 'Username Pass     ', 'placeholder': 'Password', 'tint_color': file_colour},
@@ -98,6 +104,8 @@ spacing = 70
 font = ('Chalkduster', 16)
 interval = 30
 
+animation_length = 0.3
+
 picker = 'black'
 assets = {}
 
@@ -106,10 +114,10 @@ for file in os.listdir(asset_location):
     if fd[-1] == 'png':
         assets[fd[0]] = ui.Image.named(f'{asset_location}/{file}')
 
-audio_extensions = ['ogg', 'mp3', 'flac', 'alac', 'mp2', 'wav']
+audio_extensions = ['ogg', 'mp3', 'flac', 'alac', 'mp2', 'wav', 'aup']
 video_extensions = ['mov', 'mp4', 'mkv']
 photo_extensions = ['png','jpeg','jpg','heic', 'gif']
-unicode_file = ['txt', 'py', 'json', 'js', 'c', 'cpp']
+unicode_file = ['txt', 'py', 'json', 'js', 'c', 'cpp', 'ini']
 special_extensions = ['csv', 'pdf', 'docx']
 
 def make_buttons(*args):
@@ -146,6 +154,8 @@ def make_buttons(*args):
 class SInteractivePanel(ui.View):
     def __init__(self):
         try:
+            
+            self.center = (w/2, h/2)
             self.background_color = '#f5f5f5' # Background color of View
             self.name = root 
             # Make new scroll view
@@ -157,7 +167,6 @@ class SInteractivePanel(ui.View):
             self.tint_color = file_colour
             motion.start_updates() # Start motion updates for update() to use
             
-            
             self.avg = self.bnts = []
             self.nas = self.last_folder = None
             self.photoview = self.load_buffer = self.is_pointing = self.download = False
@@ -168,13 +177,15 @@ class SInteractivePanel(ui.View):
             self.scroll_view.width = w
             self.scroll_view.content_size = (w, h)
             self.file_display_formula = (self.width/3, spacing, default_width, default_height)
-            
             # Esablish connection, this will continue until script is closed
             
             self.left_button_items = [ui.ButtonItem(image=ui.Image.named('iob:chevron_left_32'), tint_color=file_colour, action=lambda _: self.go_back(), enabled=True)]
             
-            self.right_button_items = [ui.ButtonItem(image=ui.Image.named('typb:Write'), tint_color=file_colour, action=lambda _: self.make_media(), enabled=False)]
+            self.right_button_items = [ui.ButtonItem(image=ui.Image.named('typb:Write'), tint_color=file_colour, action=lambda _: self.make_media(), enabled=True)]
+            self.add_subview(ui.Label(name='ld', text='Loading', x=self.center[0]*.53, y=self.center[1]*0.3, alignment=ui.ALIGN_LEFT, font=font, text_color='#bcbcbc'))
             
+            
+            self.subviews[0].alpha = 0.0
             self.add_subview(self.scroll_view) # Display the files in the root
             self.render_view(root)
         except ConnectionError: # If no connection
@@ -207,7 +218,15 @@ class SInteractivePanel(ui.View):
             return console.alert('Invalid username / password')
         except ConnectionError:
             return console.alert('No Internet connection')
+    
+    def animation_on_ld(self):
+        for x in range(0, 10):
+            self.subviews[0].alpha = round(x/10)
             
+    def animation_off_ld(self):
+        for x in range(10, 0, -1):
+            self.subviews[0].alpha = round(x/10)
+                            
     def animation_on(self):
         for x in range(0, 10):
             self.scroll_view.alpha = round(x/10)
@@ -220,15 +239,17 @@ class SInteractivePanel(ui.View):
     def render_view(self, sender):
         if not self.load_buffer and not self.photoview and (isinstance(sender, ui.Button) and (sender.title == 'Login' or sender.image.name.endswith('folder.png'))) or isinstance(sender, str) :
             try:
-                self.right_button_items[0].enabled = self.load_buffer = True
+                self.load_buffer = True
                 path = sender.name if isinstance(sender, ui.Button) else sender
                 
                 try:
-                    ui.animate(self.animation_off, 0.3)  
+                    ui.animate(self.animation_off, animation_length)  
+                    ui.animate(self.animation_on_ld, animation_length-.1)
+                    
                     contents = self.nas.get_file_list(path)['data']['files']
                 except AttributeError:
                     return console.alert('No connection to NAS, typo?')
-                    
+                
                 button_metadata = ([0, file_colour, lambda _: self.render_view, h*1/8, item['name'], assets['folder'] if item['isdir'] else (assets['file'] if item['name'].split('.')[-1].lower() in unicode_file else (assets['photo'] if item['name'].split('.')[-1].lower() in photo_extensions else (assets['video'] if item['name'].split('.')[-1].lower() in video_extensions else (assets['audio'] if item['name'].split('.')[-1].lower() in audio_extensions else assets['file'])))), file_colour, item['path']] for item in contents)
                 buttons = make_buttons(button_metadata, self.file_display_formula, self.scroll_view)
                 dir_status = {}
@@ -273,16 +294,25 @@ class SInteractivePanel(ui.View):
                 self.scroll_view.content_size = (w, (default_height*r)+((210-default_height)*r)+210)
                 self.name = path
                 
+                ui.animate(self.animation_off_ld, animation_length-.1)
+                ui.animate(self.animation_on, animation_length)
                 
-                ui.animate(self.animation_on, 0.3)
+                if not self.scroll_view.subviews:
+                    self.scroll_view.add_subview(ui.Label(text='No files', x=self.center[0]*0.9, y=self.center[1]*0.6, alignment=ui.ALIGN_LEFT, font=font, text_color='#bcbcbc'))
+                    
                 self.bnts = []
                 
-            except KeyError:
+            except KeyError as e:
                 self.load_buffer = False
-                console.hud_alert(f"You're missing permissions, contact NAS Admin for help.", 'error', 3.5)
+                console.hud_alert(f"You're missing permissions, contact NAS Admin for help. {e}", 'error', 3.5)
             finally:
                 self.load_buffer = False
-                ui.animate(self.animation_on, 0.3)
+                ui.animate(self.animation_on, animation_length)
+                
+        elif sender.image.name.split('.')[-1] in unicode_file+special_extensions+photo_extensions:
+            sender.enabled = False
+            self.open_file(sender, True)
+            
     
     def go_back(self):
         path = '/'.join(str(self.name).split('/')[:-1])
@@ -392,7 +422,7 @@ class SInteractivePanel(ui.View):
             items = ['Download', 'Delete', 'Rename', 'Open', 'Info'] if not sender.title == 'True' else ['Delete', 'Rename', 'Open', 'Info']
             option = dialogs.list_dialog(title=sender.name, items=items)
         
-        
+            
             if option == 'Delete':
                 self.delete_file(sender)
             elif option == 'Rename':
@@ -451,37 +481,48 @@ class SInteractivePanel(ui.View):
             self.render_view(self.last_folder)
                                             
     @ui.in_background
-    def open_file(self, sender_data):
+    def open_file(self, sender_data, file=None):
         try:
             os.mkdir('output')
         except FileExistsError:
             pass
         finally:
             
-            if sender_data.title == 'False':
+            status = self.nas.get_file_info(sender_data.name) if file else False
+            f = True if file and not status['data']['files'][0]['isdir'] else False
+            true_name = sender_data.name if not f else sender_data.title
+            true_path = f'{self.name}/{sender_data.name}' if not f else sender_data.name
+            
+            folder_bool = self.nas.get_file_info(true_path)['data']['files'][0]['isdir']
+            
+            if sender_data.title == 'False' or not folder_bool:
                 
-                link = self.nas.get_download_url(f'{self.name}/{sender_data.name}')
-                file_extension = str(sender_data.name).split('.')[-1].lower() 
+                
+                link = self.nas.get_download_url(true_path)
+                file_extension = str(true_name).split('.')[-1].lower() 
                 
                 if file_extension in photo_extensions+unicode_file+special_extensions:
                     
-                    with open(sender_data.name, 'wb') as file:
+                    with open(true_name, 'wb') as file:
                         with io.BytesIO(requests.get(link).content) as data:
                             file.write(data.getvalue())
                 
                     if file_extension in photo_extensions+special_extensions:
-                        console.quicklook(sender_data.name)
+                        console.quicklook(true_name)
                     else:
-                        with open(sender_data.name, 'r') as r_file:
-                            dialogs.text_dialog(title=sender_data.name, text=r_file.read())
+                        with open(true_name, 'r') as r_file:
+                            dialogs.text_dialog(title=true_name, text=r_file.read())
                         
-                    os.remove(sender_data.name)
+                    os.remove(true_name)
+                    sender_data.enabled = True 
                     
                 else:
                     console.alert('Cannot open this file.')
                     
             else:
-                files = self.nas.get_file_list(f'{self.name}/{sender_data.name}')['data']['files']
+                print('>>',true_path)
+                
+                files = self.nas.get_file_list(true_path)['data']['files']
                 self._files = (file['name'] for file in files if not file['isdir'] and str(file['name'].split('.')[-1]).lower() in photo_extensions+special_extensions)
                 
                 c = (file['name'] for file in files if not file['isdir'] and str(file['name'].split('.')[-1]).lower() in photo_extensions+special_extensions)
@@ -495,7 +536,7 @@ class SInteractivePanel(ui.View):
                     self.photoview = True
                     PhotoView(main=self).present('full_screen')
                 else:
-                    console.hud_alert("No images to display.", 'error', 2)
+                    self.render_view(true_path)
 
                     
 
@@ -554,8 +595,8 @@ class PhotoView(ui.View):
         self.s_img = img
         self.name = self.filenames[pos]
         
-        ui.animate(self.animation_off_, .3) # Make PhotoView fully transparent, so the image can change gracefully
-        ui.delay(self.show, .3) # Actually display new image
+        ui.animate(self.animation_off_, animation_length) # Make PhotoView fully transparent, so the image can change gracefully
+        ui.delay(self.show, animation_length) # Actually display new image
         ui.delay(self.anime_on_buffer, 0.7) # Turn on PhotoView
         
     def update(self):
