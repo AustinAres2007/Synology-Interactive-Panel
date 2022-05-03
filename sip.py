@@ -1,5 +1,5 @@
 """
-Only Programmed on iPad Pro third generations, has NOT been tested with other models.
+Only Programmed on iPad Pro third generations, has NOT been tested with other models. On latest version of python avalible on Pythonista (Python 3.6)
 
 Made by Austin Ares, 
 "nas" module made by https://github.com/N4S4/synology-api go check them out.
@@ -18,18 +18,20 @@ TODO:
     Add keyboard shortcuts for browsing through files, (Feature, Done)
     Add proper login form (Feature, Done)
     Make digital buttons for browsing through directories (Feature, Done)
-    Be able to import photos / files from the camera roll and iCloud (Feature)
+    Be able to import photos / files from the camera roll and iCloud (Feature, Done)
+    Add a button where you can take a photo, and the photo will save to the directory you are in (Gimmick)
     Open file by default when tapping on it (Change, Done)
     When going into more options on a folder and tapping "Open" just open the folder, don't return an error (Change, Done)
     When opening an empty directory, there is no indication that the folder is empty, and could be mistaken that SiP has crashed (Change, Done)
     
-    - Bugs
+    - Bugs / Issues
     
     When logged in with an account that is missing permissions, it returns no graceful error. (Bug, Fixed)
     When spamming Q or E (To go back a directory, or to go forward) when done enough, SiP will freeze. (Bug, Fixed)
     When using motion controls with PhotoView, SiP will also respond to these. (Bug, Fixed)
     When renaming a file, any file, SiP will freeze. (Bug, Fixed)
     Cannot open PDF files. (Bug, Fixed)
+    When the remainder of files in a directory is 2, the you can overshoot the files a little bit (Issue)
     
 '''
 
@@ -40,7 +42,10 @@ import dialogs
 import motion
 import io
 import requests
-
+import config
+import objc_util
+import photos
+import shutil
 
 from nas.auth import AuthenticationError
 from requests.exceptions import ConnectionError
@@ -51,8 +56,15 @@ from time import sleep
 from hurry.filesize import size as s
 from hurry.filesize import verbose
 
+cfg = config.Config('sip-config.cfg')
 w, h = ui.get_screen_size()
-file_colour = 'black'
+
+mode = objc_util.ObjCClass('UITraitCollection').currentTraitCollection().userInterfaceStyle()
+mode = 'dark' if mode == 2 else 'light'
+
+file_colour = cfg[mode]['fl_color'] 
+background_color = cfg[mode]['bk_color'] 
+title_bar_color = cfg[mode]['tb_color'] 
 
 if len(argv) >= 5:
     
@@ -97,15 +109,16 @@ asset_location = './assets'
 averg = lambda data_set: max(set(data_set), key = data_set.count)
 contents = lambda dir_c: ((file.title, file.subviews[1].title) for file in dir_c)
     
-blunt = False
+blunt = cfg['blunt']
 default_width = w*1/7
 default_height = h*1/5
-spacing = 70
-font = ('Chalkduster', 16)
-interval = 30
+spacing = cfg['spacing']
+font = (cfg['font'], cfg['font_size'])
+interval = cfg['interval']
 
-animation_length = 0.3
+animation_length = cfg['anime_length']
 
+motion_controls = cfg['motion_controls']
 picker = 'black'
 assets = {}
 
@@ -156,16 +169,16 @@ class SInteractivePanel(ui.View):
         try:
             
             self.center = (w/2, h/2)
-            self.background_color = '#f5f5f5' # Background color of View
+            self.background_color = background_color # Background color of View
             self.name = root 
             # Make new scroll view
             self.scroll_view = ui.ScrollView()
             
             # Define dimentions
             
-            self.update_interval = 0.2
+            self.update_interval = 0.2 if motion_controls else 0
             self.tint_color = file_colour
-            motion.start_updates() # Start motion updates for update() to use
+            motion.start_updates() if motion_controls else None # Start motion updates for update() to use
             
             self.avg = self.bnts = []
             self.nas = self.last_folder = None
@@ -180,9 +193,9 @@ class SInteractivePanel(ui.View):
             # Esablish connection, this will continue until script is closed
             
             self.left_button_items = [ui.ButtonItem(image=ui.Image.named('iob:chevron_left_32'), tint_color=file_colour, action=lambda _: self.go_back(), enabled=True)]
+            self.right_button_items = [ui.ButtonItem(image=ui.Image.named('typb:Write'), tint_color=file_colour, action=lambda _: self.make_media(), enabled=True), ui.ButtonItem(image=ui.Image.named('typb:Archive'), tint_color=file_colour, action=lambda _: self.import_foreign_media(), enabled=True)]
             
-            self.right_button_items = [ui.ButtonItem(image=ui.Image.named('typb:Write'), tint_color=file_colour, action=lambda _: self.make_media(), enabled=True)]
-            self.add_subview(ui.Label(name='ld', text='Loading', x=self.center[0]*.53, y=self.center[1]*0.3, alignment=ui.ALIGN_LEFT, font=font, text_color='#bcbcbc'))
+            self.add_subview(ui.Label(name='ld', text='Loading', x=self.center[0]*.53, y=self.center[1]*0.3, alignment=ui.ALIGN_LEFT, font=font, text_color=file_colour))
             
             
             self.subviews[0].alpha = 0.0
@@ -192,7 +205,7 @@ class SInteractivePanel(ui.View):
             console.alert('No Connection')
     
     def make_media(self):
-        file_or_folder = console.alert('File or Folder?', '', 'File', 'Folder')
+        file_or_folder = console.alert('New', '', 'File', 'Folder')
         name = console.input_alert('Media Name', '')
         
         if file_or_folder == 2:
@@ -213,7 +226,7 @@ class SInteractivePanel(ui.View):
         
     def connect(self):
         try:
-            self.nas = filestation.FileStation(url, port, user, passw, secure=True, debug=True)
+            self.nas = filestation.FileStation(url, port, user, passw, secure=True, debug=cfg['debug'])
         except AuthenticationError:
             return console.alert('Invalid username / password')
         except ConnectionError:
@@ -270,6 +283,7 @@ class SInteractivePanel(ui.View):
                     file_lable.alignment = ui.ALIGN_RIGHT
                     file_lable.line_break_mode = ui.LB_TRUNCATE_TAIL                
                     file_lable.font = font
+                    file_lable.text_color = file_colour
                     
                     self.bnts[ind].x = -20
                     self.bnts[ind].y = -35
@@ -304,9 +318,15 @@ class SInteractivePanel(ui.View):
                 
             except KeyError as e:
                 self.load_buffer = False
-                console.hud_alert(f"You're missing permissions, contact NAS Admin for help. {e}", 'error', 3.5)
+                console.hud_alert(f"You're missing permissions, contact NAS Admin for help. {e}", 'error', 3.5) 
+            except ConnectionError:
+                console.hud_alert(f"Timed out connection", 'error', 3.5)
+                self.close()
+                
             finally:
                 self.load_buffer = False
+                
+                ui.animate(self.animation_off_ld, animation_length-.1)
                 ui.animate(self.animation_on, animation_length)
                 
         elif sender.image.name.split('.')[-1] in unicode_file+special_extensions+photo_extensions:
@@ -479,7 +499,31 @@ class SInteractivePanel(ui.View):
             self.go_back()
         elif sender['input'] == 'e' and self.last_folder:
             self.render_view(self.last_folder)
-                                            
+    
+    def import_foreign_media(self):
+        
+        images = photos.pick_asset(title='Pick Media', multi=True) 
+        path = self.name
+        
+        if os.path.isdir('./cache'):
+            shutil.rmtree('./cache')
+            
+        os.mkdir('./cache')
+            
+        if images:
+            for photo in images:
+                fn = str(photo.local_id).split('/')[0]
+                bytes = photo.get_image_data()
+                
+                with open(f'./cache/{fn}{extension}', 'wb') as temp_file:
+                    for ch in bytes:
+                        temp_file.write(ch)
+            
+            for img in os.listdir('./cache'):
+                self.nas.upload_file(path, f'./cache/{img}')
+                
+            shutil.rmtree('./cache')
+                                           
     @ui.in_background
     def open_file(self, sender_data, file=None):
         try:
@@ -520,8 +564,6 @@ class SInteractivePanel(ui.View):
                     console.alert('Cannot open this file.')
                     
             else:
-                print('>>',true_path)
-                
                 files = self.nas.get_file_list(true_path)['data']['files']
                 self._files = (file['name'] for file in files if not file['isdir'] and str(file['name'].split('.')[-1]).lower() in photo_extensions+special_extensions)
                 
@@ -545,7 +587,7 @@ class SInteractivePanel(ui.View):
 class PhotoView(ui.View):
     def __init__(self, main: SInteractivePanel): # Initialise PhotoView
         
-        self.update_interval = 0.1 # Call class mathod update every tenth of a second
+        self.update_interval = 0.1 if motion_controls else 0 # Call class mathod update every tenth of a second
         self.main_class = main # Make it so SInteractivePanel (main class) can be refered too
         self.files = [file for file in self.main_class._files] # Make a list of the filenames, from directory we are currently in
         self.reletive_position = 0 # What file we are in currently, will start at the first file of the directory
@@ -687,4 +729,4 @@ class PhotoView(ui.View):
 View = SInteractivePanel() # Make an instance of the main script
 
 View.connect() # Establish connection to NAS
-View.present('full_screen', hide_close_button=True) # Display initialised screen content
+View.present(cfg['orientation'], hide_close_button=True, title_bar_color=title_bar_color, title_color=file_colour) # Display initialised screen content
