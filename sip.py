@@ -289,7 +289,7 @@ class SInteractivePanel(ui.View):
                     self.scroll_view.subviews[o].add_subview(a)
                     
                 i = len(self.scroll_view.subviews)
-                r = round(i/3+i%3) if round(i/3+i%3)%3 != 0 else round(i/3+i%3)-2   
+                r = round(i/3+i%3)
                 
                 self.scroll_view.content_size = (w, (default_height*r)+((210-default_height)*r)+210)
                 self.name = path
