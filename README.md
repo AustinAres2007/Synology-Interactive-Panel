@@ -31,9 +31,9 @@ Can view files, folders, and images.
   
   You will need three extra modules that are not bundled with Pythonista, these are
   
-  1. hurry.filesize ('''pip install hurry.filesize''')
+  1. hurry.filesize (```pip install hurry.filesize```)
   
-  1. config ('''pip install config''')
+  1. config (```pip install config```)
   
   1. synology-api (Already bundled with the ZiP download of SiP, but is a fork. Do not use original package. Credit: [N4S4](https://github.com/N4S4/))
 ## Credits
