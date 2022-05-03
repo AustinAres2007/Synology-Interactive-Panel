@@ -28,5 +28,5 @@ Can view files, folders, and images.
   1. root  >  Name of the root of the NAS, mine is /Volume, yours maybe different. 
   
 ## Credits
-  Made by Austin Ares (Austin Ares#2263 on Discord)
+  Made by Austin Ares (Beo#6572 on Discord)
   "nas" module made by https://github.com/N4S4/ on GitHub, but edited by me to fit my needs, go check them out.
