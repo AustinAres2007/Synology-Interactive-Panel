@@ -42,7 +42,6 @@ import dialogs
 import motion
 import io
 import requests
-import config
 import objc_util
 import photos
 import shutil
@@ -51,11 +50,19 @@ from nas.auth import AuthenticationError
 from requests.exceptions import ConnectionError
 from threading import Thread
 from sys import argv, exit
-from nas import filestation
 from time import sleep
 from hurry.filesize import size as s
 from hurry.filesize import verbose
 
+try:
+    import config
+    
+    from nas import filestation
+    from nas.auth import AuthenticationError
+    
+except ModuleNotFoundError as e:
+    print(f'"config" or "nas" module not found.\n\nActual Error: {e}'); exit(1)
+    
 cfg = config.Config('sip-config.cfg')
 w, h = ui.get_screen_size()
 
@@ -115,6 +122,7 @@ default_height = h*1/5
 spacing = cfg['spacing']
 font = (cfg['font'], cfg['font_size'])
 interval = cfg['interval']
+debug = cfg['debug']
 
 animation_length = cfg['anime_length']
 
@@ -168,6 +176,7 @@ class SInteractivePanel(ui.View):
     def __init__(self):
         try:
             
+            self.text = 'Loading'
             self.center = (w/2, h/2)
             self.background_color = background_color # Background color of View
             self.name = root 
@@ -182,7 +191,7 @@ class SInteractivePanel(ui.View):
             
             self.avg = self.bnts = []
             self.nas = self.last_folder = None
-            self.photoview = self.load_buffer = self.is_pointing = self.download = False
+            self.off = self.photoview = self.load_buffer = self.is_pointing = self.download = False
             
             # Define the scrollable area, only done on initialisation, when going through folders, it's done in render_view
             
@@ -195,7 +204,7 @@ class SInteractivePanel(ui.View):
             self.left_button_items = [ui.ButtonItem(image=ui.Image.named('iob:chevron_left_32'), tint_color=file_colour, action=lambda _: self.go_back(), enabled=True)]
             self.right_button_items = [ui.ButtonItem(image=ui.Image.named('typb:Write'), tint_color=file_colour, action=lambda _: self.make_media(), enabled=True), ui.ButtonItem(image=ui.Image.named('typb:Archive'), tint_color=file_colour, action=lambda _: self.import_foreign_media(), enabled=True)]
             
-            self.add_subview(ui.Label(name='ld', text='Loading', x=self.center[0]*.53, y=self.center[1]*0.3, alignment=ui.ALIGN_LEFT, font=font, text_color=file_colour))
+            self.add_subview(ui.Label(name='ld', text=self.text, x=self.center[0]*.52, y=self.center[1]*0.3, alignment=ui.ALIGN_CENTER, font=font, text_color=file_colour))
             
             
             self.subviews[0].alpha = 0.0
@@ -226,7 +235,7 @@ class SInteractivePanel(ui.View):
         
     def connect(self):
         try:
-            self.nas = filestation.FileStation(url, port, user, passw, secure=True, debug=cfg['debug'])
+            self.nas = filestation.FileStation(url, port, user, passw, secure=True, debug=debug)
         except AuthenticationError:
             return console.alert('Invalid username / password')
         except ConnectionError:
@@ -252,6 +261,7 @@ class SInteractivePanel(ui.View):
     def render_view(self, sender):
         if not self.load_buffer and not self.photoview and (isinstance(sender, ui.Button) and (sender.title == 'Login' or sender.image.name.endswith('folder.png'))) or isinstance(sender, str) :
             try:
+                self.subviews[0].text = 'Loading'
                 self.load_buffer = True
                 path = sender.name if isinstance(sender, ui.Button) else sender
                 
@@ -259,10 +269,15 @@ class SInteractivePanel(ui.View):
                     ui.animate(self.animation_off, animation_length)  
                     ui.animate(self.animation_on_ld, animation_length-.1)
                     
-                    contents = self.nas.get_file_list(path)['data']['files']
+                    contents_d = self.nas.get_file_list(path)
+                    contents = contents_d['data']['files']
+                    
                 except AttributeError:
                     return console.alert('No connection to NAS, typo?')
-                
+                except KeyError:
+                    console.hud_alert(f"Error, If this persists, it could be you are missing permissions to this directory.", 'error', 3.5) 
+                    print(f'DEBUG: {contents_d}') if debug else None
+                    
                 button_metadata = ([0, file_colour, lambda _: self.render_view, h*1/8, item['name'], assets['folder'] if item['isdir'] else (assets['file'] if item['name'].split('.')[-1].lower() in unicode_file else (assets['photo'] if item['name'].split('.')[-1].lower() in photo_extensions else (assets['video'] if item['name'].split('.')[-1].lower() in video_extensions else (assets['audio'] if item['name'].split('.')[-1].lower() in audio_extensions else assets['file'])))), file_colour, item['path']] for item in contents)
                 buttons = make_buttons(button_metadata, self.file_display_formula, self.scroll_view)
                 dir_status = {}
@@ -316,9 +331,6 @@ class SInteractivePanel(ui.View):
                     
                 self.bnts = []
                 
-            except KeyError as e:
-                self.load_buffer = False
-                console.hud_alert(f"You're missing permissions, contact NAS Admin for help. {e}", 'error', 3.5) 
             except ConnectionError:
                 console.hud_alert(f"Timed out connection", 'error', 3.5)
                 self.close()
@@ -463,6 +475,13 @@ class SInteractivePanel(ui.View):
         except Exception as e:
             console.alert(e)
             
+    
+    def display_central_text(self):
+        off = self.off
+        self.subviews[0].text = self.text
+        
+        ui.animate(self.animation_off if off else self.animation_on, animation_length)
+        ui.animate(self.animation_off_ld if not off else self.animation_on_ld, animation_length)
         
     def rename_file(self, sender_data):
         name = str(console.input_alert('Please chose new name.'))
@@ -502,6 +521,12 @@ class SInteractivePanel(ui.View):
     
     def import_foreign_media(self):
         
+        path = self.name
+        self.off = True
+        self.text = 'Wait.'
+        
+        ui.animate(self.display_central_text, animation_length)
+        
         images = photos.pick_asset(title='Pick Media', multi=True) 
         path = self.name
         
@@ -509,13 +534,14 @@ class SInteractivePanel(ui.View):
             shutil.rmtree('./cache')
             
         os.mkdir('./cache')
+       
+        if images and len(images) <= 10:
             
-        if images:
             for photo in images:
                 fn = str(photo.local_id).split('/')[0]
                 bytes = photo.get_image_data()
                 
-                with open(f'./cache/{fn}{extension}', 'wb') as temp_file:
+                with open(f'./cache/{fn}.jpg', 'wb') as temp_file:
                     for ch in bytes:
                         temp_file.write(ch)
             
@@ -523,7 +549,14 @@ class SInteractivePanel(ui.View):
                 self.nas.upload_file(path, f'./cache/{img}')
                 
             shutil.rmtree('./cache')
-                                           
+            
+        elif not images:
+            pass
+        else:
+            console.hud_alert('Cannot download more than 10 local images at a time.', 'error')
+        
+        self.render_view(path)  
+                                         
     @ui.in_background
     def open_file(self, sender_data, file=None):
         try:
