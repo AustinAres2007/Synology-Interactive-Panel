@@ -121,7 +121,6 @@ orientation = objc_util.ObjCClass('UIDevice').currentDevice().orientation()
 default_width = w*1/7 if orientation == 3 else w*1/5
 default_height = h*1/5
 
-print(default_width/2)
 spacing = cfg['spacing']
 font = (cfg['font'], cfg['font_size'])
 interval = cfg['interval']
