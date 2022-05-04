@@ -23,6 +23,7 @@ TODO:
     Open file by default when tapping on it (Change, Done)
     When going into more options on a folder and tapping "Open" just open the folder, don't return an error (Change, Done)
     When opening an empty directory, there is no indication that the folder is empty, and could be mistaken that SiP has crashed (Change, Done)
+    Add "Clear" option to the more menu of folders. This will clear the whole directory (Feature)
     
     - Bugs / Issues
     
@@ -66,8 +67,8 @@ except ModuleNotFoundError as e:
 cfg = config.Config('sip-config.cfg')
 w, h = ui.get_screen_size()
 
-mode = objc_util.ObjCClass('UITraitCollection').currentTraitCollection().userInterfaceStyle()
-mode = 'dark' if mode == 2 else 'light'
+mode_ = objc_util.ObjCClass('UITraitCollection').currentTraitCollection()
+mode = 'dark' if mode_.userInterfaceStyle() == 2 else 'light'
 
 file_colour = cfg[mode]['fl_color'] 
 background_color = cfg[mode]['bk_color'] 
@@ -115,14 +116,17 @@ asset_location = './assets'
 
 averg = lambda data_set: max(set(data_set), key = data_set.count)
 contents = lambda dir_c: ((file.title, file.subviews[1].title) for file in dir_c)
-    
-blunt = cfg['blunt']
-default_width = w*1/7
+orientation = objc_util.ObjCClass('UIDevice').currentDevice().orientation()
+
+default_width = w*1/7 if orientation == 3 else w*1/5
 default_height = h*1/5
+
+print(default_width/2)
 spacing = cfg['spacing']
 font = (cfg['font'], cfg['font_size'])
 interval = cfg['interval']
 debug = cfg['debug']
+blunt = cfg['blunt']
 
 animation_length = cfg['anime_length']
 
@@ -165,6 +169,7 @@ def make_buttons(*args):
         item.frame = (x, y, default_width, default_height) if i else args[1]
         old_dim = item.frame if i else args[1]
         
+        item.autoresizing = 'WH'
         item.image = element[5]
         item.tint_color = element[6]
         item.name = element[7]
@@ -204,7 +209,8 @@ class SInteractivePanel(ui.View):
             self.left_button_items = [ui.ButtonItem(image=ui.Image.named('iob:chevron_left_32'), tint_color=file_colour, action=lambda _: self.go_back(), enabled=True)]
             self.right_button_items = [ui.ButtonItem(image=ui.Image.named('typb:Write'), tint_color=file_colour, action=lambda _: self.make_media(), enabled=True), ui.ButtonItem(image=ui.Image.named('typb:Archive'), tint_color=file_colour, action=lambda _: self.import_foreign_media(), enabled=True)]
             
-            self.add_subview(ui.Label(name='ld', text=self.text, x=self.center[0]*.52, y=self.center[1]*0.3, alignment=ui.ALIGN_CENTER, font=font, text_color=file_colour))
+            x = (self.center[0 if orientation == 3 else 1]/2)+.5
+            self.add_subview(ui.Label(name='ld', text=self.text, x=x, y=self.center[1]/2, alignment=ui.ALIGN_CENTER, font=font, text_color=file_colour))
             
             
             self.subviews[0].alpha = 0.0
@@ -275,8 +281,10 @@ class SInteractivePanel(ui.View):
                 except AttributeError:
                     return console.alert('No connection to NAS, typo?')
                 except KeyError:
-                    console.hud_alert(f"Error, If this persists, it could be you are missing permissions to this directory.", 'error', 3.5) 
-                    print(f'DEBUG: {contents_d}') if debug else None
+                    if contents_d['error']['code'] == 119:
+                        console.hud_alert(f'Error, please reload script (Error code 119, cannot be fixed by author. Only Synology can fix this)')
+                    else:
+                        console.hud_alert(f"you are missing permissions to this directory.", 'error', 3.5) 
                     
                 button_metadata = ([0, file_colour, lambda _: self.render_view, h*1/8, item['name'], assets['folder'] if item['isdir'] else (assets['file'] if item['name'].split('.')[-1].lower() in unicode_file else (assets['photo'] if item['name'].split('.')[-1].lower() in photo_extensions else (assets['video'] if item['name'].split('.')[-1].lower() in video_extensions else (assets['audio'] if item['name'].split('.')[-1].lower() in audio_extensions else assets['file'])))), file_colour, item['path']] for item in contents)
                 buttons = make_buttons(button_metadata, self.file_display_formula, self.scroll_view)
