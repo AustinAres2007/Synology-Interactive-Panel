@@ -116,12 +116,17 @@ asset_location = './assets'
 
 averg = lambda data_set: max(set(data_set), key = data_set.count)
 contents = lambda dir_c: ((file.title, file.subviews[1].title) for file in dir_c)
-orientation = objc_util.ObjCClass('UIDevice').currentDevice().orientation()
+
+UIDevice = objc_util.ObjCClass('UIDevice').currentDevice()
+orientation = UIDevice.orientation()
 
 default_width = w*1/7 if orientation == 3 else w*1/5
 default_height = h*1/5
+files_per_row = cfg['files_per_row']
 
 spacing = cfg['spacing']
+spacing -= round((spacing/2)*((h % 834.0)*1/spacing))
+
 font = (cfg['font'], cfg['font_size'])
 interval = cfg['interval']
 debug = cfg['debug']
@@ -144,6 +149,7 @@ photo_extensions = ['png','jpeg','jpg','heic', 'gif']
 unicode_file = ['txt', 'py', 'json', 'js', 'c', 'cpp', 'ini']
 special_extensions = ['csv', 'pdf', 'docx']
 
+print(f' < Debug Config > \n\nSpacing: {spacing}\nFiles Per Row: {files_per_row}\nWidth: {w}\nHeight: {h}\n\n-----\n\n') if debug else None
 def make_buttons(*args):
     for subview in args[2].subviews:
         args[2].remove_subview(subview)
@@ -156,7 +162,7 @@ def make_buttons(*args):
     for i, element in enumerate(args[0]):
         item = ui.Button()
             
-        if i % 3 == 0 and i != 0:
+        if i % files_per_row == 0 and i != 0:
             y += 210
             x = args[1][0]
         elif args[1]:
@@ -202,7 +208,7 @@ class SInteractivePanel(ui.View):
             self.scroll_view.height = h
             self.scroll_view.width = w
             self.scroll_view.content_size = (w, h)
-            self.file_display_formula = (self.width/3, spacing, default_width, default_height)
+            self.file_display_formula = (self.width/files_per_row, spacing, default_width, default_height)
             # Esablish connection, this will continue until script is closed
             
             self.left_button_items = [ui.ButtonItem(image=ui.Image.named('iob:chevron_left_32'), tint_color=file_colour, action=lambda _: self.go_back(), enabled=True)]
@@ -294,10 +300,11 @@ class SInteractivePanel(ui.View):
                 
                 for ind, bnt in enumerate(buttons):
                     file_lable = ui.Label()
-                    
-                    wdt = ((len(bnt.title) / len(bnt.title)*2.1)) if len(bnt.title) > 8 else (len(bnt.title) / 7)
-        
                     self.bnts.append(ui.Button())
+                    
+                    lt = len(bnt.title)
+                    wdt = ((lt / lt*2.1)) if lt > 8 else (lt / 7)
+                    wd_multi = (1.5/2)-(1/8) if str(UIDevice.model()) == 'iPad' else (3/4)
                     
                     file_lable.text = bnt.title
                     file_lable.x = bnt.width*wdt/10
@@ -306,7 +313,8 @@ class SInteractivePanel(ui.View):
                     file_lable.line_break_mode = ui.LB_TRUNCATE_TAIL                
                     file_lable.font = font
                     file_lable.text_color = file_colour
-                    
+                    file_lable.width = bnt.width * wd_multi
+                
                     self.bnts[ind].x = -20
                     self.bnts[ind].y = -35
                     self.bnts[ind].width = self.bnts[ind].height = 100
@@ -325,9 +333,9 @@ class SInteractivePanel(ui.View):
                     self.scroll_view.subviews[o].add_subview(a)
                     
                 i = len(self.scroll_view.subviews)
-                r = round(i/3+i%3)
+                r = round(i/files_per_row+i%files_per_row)
                 
-                self.scroll_view.content_size = (w, (default_height*r)+((210-default_height)*r)+210)
+                self.scroll_view.content_size = (w/files_per_row, (default_height*r)+((210-default_height)*r)+210)
                 self.name = path
                 
                 ui.animate(self.animation_off_ld, animation_length-.1)
@@ -577,7 +585,9 @@ class SInteractivePanel(ui.View):
             true_name = sender_data.name if not f else sender_data.title
             true_path = f'{self.name}/{sender_data.name}' if not f else sender_data.name
             
-            folder_bool = self.nas.get_file_info(true_path)['data']['files'][0]['isdir']
+            try:
+                folder_bool = self.nas.get_file_info(true_path)['data']['files'][0]['isdir']
+            except:return
             
             if sender_data.title == 'False' or not folder_bool:
                 
@@ -596,7 +606,8 @@ class SInteractivePanel(ui.View):
                     else:
                         with open(true_name, 'r') as r_file:
                             dialogs.text_dialog(title=true_name, text=r_file.read())
-                        
+                   
+                    print(true_name) if debug else None 
                     os.remove(true_name)
                     sender_data.enabled = True 
                     
@@ -605,9 +616,9 @@ class SInteractivePanel(ui.View):
                     
             else:
                 files = self.nas.get_file_list(true_path)['data']['files']
-                self._files = (file['name'] for file in files if not file['isdir'] and str(file['name'].split('.')[-1]).lower() in photo_extensions+special_extensions)
+                self._files = (file['name'] for file in files if not file['isdir'] and str(file['name'].split('.')[-1]).lower() in photo_extensions)
                 
-                c = (file['name'] for file in files if not file['isdir'] and str(file['name'].split('.')[-1]).lower() in photo_extensions+special_extensions)
+                c = (file['name'] for file in files if not file['isdir'] and str(file['name'].split('.')[-1]).lower() in photo_extensions)
                 c = [item for item in c]
                 
                 self._s_dir = sender_data.name
@@ -637,6 +648,9 @@ class PhotoView(ui.View):
         self.filenames = []
         self.flag = False # Flag for scrolling through images
         
+        self.background_color = background_color
+        
+        self.right_button_items = [ui.ButtonItem(image=ui.Image.named('typb:Views'), tint_color=file_colour, action=lambda _: self.display_all(), enabled=True)]
         self.get_image(main.nas.get_download_url(f'{main.name}/{main._s_dir}/{self.files[self.reletive_position]}'),self.files[self.reletive_position]) # Download first Image to be displayed
         self.photo_view = ui.ImageView(image=self.imgs[0], width=710, height=710) # Initialise the ImageView
 
@@ -726,6 +740,21 @@ class PhotoView(ui.View):
     def get_key_commands(self):
         return [{'input': 'right'}, {'input': 'left'}, {'input': 's'}, {'input': 'x', 'modifiers': 'cmd'}] # Which shortcuts are allowed
     
+    def display_all(self):
+        # Handles letter "s" shortcut
+        filename = f'{self.filenames[self.reletive_position]}.png' # Get name of file that is being displayed
+                
+        # Write a file where the image can be quicklooked
+        with open(filename, 'wb') as tmp_file:
+            try:
+                tmp_file.write(self.photo_view.image.to_png())
+            except AttributeError:
+                return
+      
+        print(filename) if debug else None          
+        console.quicklook(filename) # Display image
+        os.remove(filename) # Remove temp file
+        
     def key_command(self, sender):
         try:
 
@@ -743,15 +772,7 @@ class PhotoView(ui.View):
                 self.reletive_position -= 1
                 
             elif sender['input'] == 's' and not self.loading:
-                # Handles letter "s" shortcut
-                filename = f'{self.filenames[self.reletive_position]}.png' # Get name of file that is being displayed
-                
-                # Write a file where the image can be quicklooked
-                with open(filename, 'wb') as tmp_file:
-                    tmp_file.write(self.photo_view.image.to_png())
-                
-                console.quicklook(filename) # Display image
-                os.remove(filename) # Remove temp file
+                self.display_all()
                 
             elif sender['input'] == 'x' and sender['modifiers'] == 'cmd':
                 self.close()
