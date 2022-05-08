@@ -10,7 +10,7 @@ PS: Modifications were made to the "nas" module to better support what I am maki
 '''
 TODO: 
     
-    - Features / Changes
+    - Features / Changes / Functions
     
     Make files / folders from SiP, (Feature, Done)
     Open text files (text or source code), (Feature, Done)
@@ -19,11 +19,11 @@ TODO:
     Add proper login form (Feature, Done)
     Make digital buttons for browsing through directories (Feature, Done)
     Be able to import photos / files from the camera roll and iCloud (Feature, Done)
-    Add a button where you can take a photo, and the photo will save to the directory you are in (Gimmick)
     Open file by default when tapping on it (Change, Done)
     When going into more options on a folder and tapping "Open" just open the folder, don't return an error (Change, Done)
     When opening an empty directory, there is no indication that the folder is empty, and could be mistaken that SiP has crashed (Change, Done)
     Add "Clear" option to the more menu of folders. This will clear the whole directory (Feature)
+    Add digital left / right buttons on PhotoView to navigate through images (Function, Done)
     
     - Bugs / Issues
     
@@ -32,7 +32,7 @@ TODO:
     When using motion controls with PhotoView, SiP will also respond to these. (Bug, Fixed)
     When renaming a file, any file, SiP will freeze. (Bug, Fixed)
     Cannot open PDF files. (Bug, Fixed)
-    When the remainder of files in a directory is 2, the you can overshoot the files a little bit (Issue)
+    When the remainder of files in a directory is 2, the you can overshoot the files a little bit (Issue, Fixed)
     
 '''
 
@@ -190,15 +190,12 @@ class SInteractivePanel(ui.View):
             self.center = (w/2, h/2)
             self.background_color = background_color # Background color of View
             self.name = root 
+            
             # Make new scroll view
+            
             self.scroll_view = ui.ScrollView()
-            
-            # Define dimentions
-            
-            self.update_interval = 0.2 if motion_controls else 0
             self.tint_color = file_colour
-            motion.start_updates() if motion_controls else None # Start motion updates for update() to use
-            
+ 
             self.avg = self.bnts = []
             self.nas = self.last_folder = None
             self.off = self.photoview = self.load_buffer = self.is_pointing = self.download = False
@@ -214,7 +211,7 @@ class SInteractivePanel(ui.View):
             self.left_button_items = [ui.ButtonItem(image=ui.Image.named('iob:chevron_left_32'), tint_color=file_colour, action=lambda _: self.go_back(), enabled=True)]
             self.right_button_items = [ui.ButtonItem(image=ui.Image.named('typb:Write'), tint_color=file_colour, action=lambda _: self.make_media(), enabled=True), ui.ButtonItem(image=ui.Image.named('typb:Archive'), tint_color=file_colour, action=lambda _: self.import_foreign_media(), enabled=True)]
             
-            x = (self.center[0 if orientation == 3 else 1]/2)+.5
+            x = (self.center[0 if orientation == 3 else 1]/(2 if str(UIDevice.model())=='iPad' else 3))+.5
             self.add_subview(ui.Label(name='ld', text=self.text, x=x, y=self.center[1]/2, alignment=ui.ALIGN_CENTER, font=font, text_color=file_colour))
             
             
@@ -315,8 +312,8 @@ class SInteractivePanel(ui.View):
                     file_lable.text_color = file_colour
                     file_lable.width = bnt.width * wd_multi
                 
-                    self.bnts[ind].x = -20
-                    self.bnts[ind].y = -35
+                    self.bnts[ind].x = -bnt.width*1/8
+                    self.bnts[ind].y = -bnt.width*1/5
                     self.bnts[ind].width = self.bnts[ind].height = 100
                     self.bnts[ind].image = assets['opt']
                     self.bnts[ind].title = str(dir_status[bnt.title])
@@ -333,7 +330,8 @@ class SInteractivePanel(ui.View):
                     self.scroll_view.subviews[o].add_subview(a)
                     
                 i = len(self.scroll_view.subviews)
-                r = round(i/files_per_row+i%files_per_row)
+                r = round(i/files_per_row+i%files_per_row)-(2 if i%files_per_row==2 else 0)
+                
                 
                 self.scroll_view.content_size = (w/files_per_row, (default_height*r)+((210-default_height)*r)+210)
                 self.name = path
@@ -367,40 +365,6 @@ class SInteractivePanel(ui.View):
         if path:
             self.last_folder = self.name
             self.render_view(path)
-            
-    @ui.in_background
-    def update(self):
-        i = motion.get_attitude()[0]
-        y = motion.get_attitude()[1]
-        
-        if y < -0.15 and not self.is_pointing:
-            self.is_pointing = True
-            self.position = 'left'
-            
-            self.go_back()
-              
-        elif self.is_pointing and (y < -0.15 or y > 0.18 or i > -0.2):
-            self.pointing = False
-            
-        elif y > 0.18 and not self.is_pointing:
-            self.position = 'right'
-            if self.last_folder:
-                
-                self.render_view(self.last_folder)
-                
-                self.is_pointing = True
-                self.last_folder = None
-            
-        elif i > -0.2:
-            self.position = 'up'
-            if self.download and not self.is_pointing:
-                console.alert(str(self.download))
-                self.is_pointing = True
-                 
-        else:
-            self.position = None
-            self.is_pointing = False
-
         
     def estimate_download(self, sender_data) -> int:
         x_old = 0
@@ -526,13 +490,19 @@ class SInteractivePanel(ui.View):
             console.quicklook(path)
     
     def get_key_commands(self):
-        return [{'input': 'q'}, {'input': 'e'}]
+        return [{'input': 'q'}, {'input': 'e'}, {'input': 't', 'modifiers': 'cmd'}]
     
     def key_command(self, sender):
+        
         if sender['input'] == 'q':
             self.go_back()
         elif sender['input'] == 'e' and self.last_folder:
             self.render_view(self.last_folder)
+        elif sender['input'] == 't' and sender['modifiers'] == 'cmd':
+            command = console.input_alert('Debug Console')
+            
+            if command == 'clear':
+                shutil.rmtree('./ImgView')
     
     def import_foreign_media(self):
         
@@ -571,7 +541,7 @@ class SInteractivePanel(ui.View):
             console.hud_alert('Cannot download more than 10 local images at a time.', 'error')
         
         self.render_view(path)  
-                                         
+        
     @ui.in_background
     def open_file(self, sender_data, file=None):
         try:
@@ -607,7 +577,6 @@ class SInteractivePanel(ui.View):
                         with open(true_name, 'r') as r_file:
                             dialogs.text_dialog(title=true_name, text=r_file.read())
                    
-                    print(true_name) if debug else None 
                     os.remove(true_name)
                     sender_data.enabled = True 
                     
@@ -616,177 +585,111 @@ class SInteractivePanel(ui.View):
                     
             else:
                 files = self.nas.get_file_list(true_path)['data']['files']
-                self._files = (file['name'] for file in files if not file['isdir'] and str(file['name'].split('.')[-1]).lower() in photo_extensions)
+                get_files = lambda: (file['name'] for file in files if not file['isdir'] and str(file['name'].split('.')[-1]).lower() in photo_extensions)
                 
-                c = (file['name'] for file in files if not file['isdir'] and str(file['name'].split('.')[-1]).lower() in photo_extensions)
+                self._files = get_files()
+                
+                #c = (file['name'] for file in files if not file['isdir'] and str(file['name'].split('.')[-1]).lower() in photo_extensions)
+                c = get_files()
                 c = [item for item in c]
                 
                 self._s_dir = sender_data.name
                 
-                if bool(c):
-                    console.hud_alert("Please Wait...", 'success', 2)
-            
+                if bool(c):    
                     self.photoview = True
-                    PhotoView(main=self).present('full_screen')
+                    
+                    self.img_view = ImgViewMain(self)
+                    self.img_view.present('full_screen', title_bar_color=title_bar_color, title_color=file_colour, hide_close_button=True)
+                    
+                    self.photoview = False
+                        
                 else:
                     self.render_view(true_path)
 
-                    
 
+class ImgViewMain(ui.View):
+    def __init__(self, s: SInteractivePanel):
+        self.frame = (0, 0, 500, 500)
+        self.name = s._s_dir
+        
+        tb = ui.TableView(flex='wh', frame=self.frame)
+        tb.data_source = tb.delegate = ImgViewDelegate(sip=s)
+        tb.bg_color = background_color
+        tb.separator_color = file_colour
+        
+        self.add_subview(tb)        
 
-# PhotoView class: only used when opening a folder
-class PhotoView(ui.View):
-    def __init__(self, main: SInteractivePanel): # Initialise PhotoView
         
-        self.update_interval = 0.1 if motion_controls else 0 # Call class mathod update every tenth of a second
-        self.main_class = main # Make it so SInteractivePanel (main class) can be refered too
-        self.files = [file for file in self.main_class._files] # Make a list of the filenames, from directory we are currently in
-        self.reletive_position = 0 # What file we are in currently, will start at the first file of the directory
         
-        self.loading = False
-        self.imgs = [] # Image Metadata
-        self.filenames = []
-        self.flag = False # Flag for scrolling through images
+class ImgViewDelegate(ui.ListDataSource):
+    def get_image(self, url, fn): # Downloads an Image
+        if not os.path.isdir('ImgView'):
+            os.mkdir('ImgView')
+            
+        try:
+                
+            with open(f'./ImgView/{fn}', 'wb') as file:
+                with io.BytesIO(requests.get(url).content) as b: # Download Image from URL
+                    file.write(b.getvalue())
+            
+            self.added_files.append(fn)
+            
+        except requests.exceptions.ChunkedEncodingError:
+            console.alert("Could not download file. Did you shut down your iPad\nwhile ImageView was open?")
+            self.sip.img_view.close()
         
-        self.background_color = background_color
+    def __init__(self, sip: SInteractivePanel):
+        self.sip = sip
+        self.files = [file for file in sip._files]
+        self.added_files = []
         
-        self.right_button_items = [ui.ButtonItem(image=ui.Image.named('typb:Views'), tint_color=file_colour, action=lambda _: self.display_all(), enabled=True)]
-        self.get_image(main.nas.get_download_url(f'{main.name}/{main._s_dir}/{self.files[self.reletive_position]}'),self.files[self.reletive_position]) # Download first Image to be displayed
-        self.photo_view = ui.ImageView(image=self.imgs[0], width=710, height=710) # Initialise the ImageView
-
-        self.add_subview(self.photo_view) # Add as a subview
-        
-        for x in range(self.reletive_position+1, len(self.files)): # Iterate for every file in the directory (that is an image)
+        for x in range(0, len(self.files)): # Iterate for every file in the directory (that is an image)
             try:
-                Thread(target=self.get_image, args=(main.nas.get_download_url(f'{main.name}/{main._s_dir}/{self.files[x]}'), self.files[x],)).start() # Download the Image
+                
+                fn = self.files[x]
+                if not os.path.isfile(f'./ImgView/{fn}'):
+                    Thread(target=self.get_image, args=(sip.nas.get_download_url(f'{sip.name}/{sip._s_dir}/{self.files[x]}'), fn,)).start() # Download the Image
+                
+                else:
+                    self.added_files.append(fn)
+                    
             except IndexError: # Dunno why this exception in here, thoughts it may break
                 break
-    
-    def get_image(self, url, fn): # Downloads an Image
         
-        with io.BytesIO(requests.get(url).content) as b: # Download Image from URL
-            img = ui.Image.from_data(b.getvalue(), 3) # Translate bytes into _ui.Image
         
-        self.filenames.append(fn)
-        self.imgs.append(img) 
-    
-    def animation_on_(self): # Turns on the screen, do NOT call directly if you want a smooth transition
-        for x in range(0, 10):
-            self.photo_view.alpha += .1
-        self.loading = False
-            
-    def animation_off_(self): # Turns off the screen, do NOT call directly if you want a smooth transition
-        for _ in range(10):
-            self.photo_view.alpha -= .1
-    
-    def anime_on_buffer(self): # Is a buffer for turning on the screen
-        ui.animate(self.animation_on_, .3)
-        
-    def show(self): # Call directly if you want no switch animation, rmember to change self.s_img to a _ui.Image type
-        self.photo_view.image = self.s_img
-        
-    def display_new(self, img: ui.Image, pos): # Displays images onto screen
-        
-        self.loading = True
-        self.s_img = img
-        self.name = self.filenames[pos]
-        
-        ui.animate(self.animation_off_, animation_length) # Make PhotoView fully transparent, so the image can change gracefully
-        ui.delay(self.show, animation_length) # Actually display new image
-        ui.delay(self.anime_on_buffer, 0.7) # Turn on PhotoView
-        
-    def update(self):
-        
-        """
-        Handles motion controls for PhotoView, but all calculations are done in SinteractivePanel.update
-        This is very buggy, and I am looking for a fix / alternative, only works well if the use is sitting / standing still.
-        """
-        
-        # self.flag: Keeps the user from trying to scroll through images too fast
-        
-        position = self.main_class.position # Get the users tilt
-        
-        try:
-            if position == 'left' and not self.flag:
-                
-                # If the user tilts the device left (from landscape)
-                
-                self.display_new(self.imgs[self.reletive_position-1], self.reletive_position-1) # Display leftmost image from the list
-                self.reletive_position -= 1
-                self.flag = True
-                
-            elif position == 'right' and not self.flag:
-                
-                # If the user tilts the device right (from landscape)
-                
-                self.display_new(self.imgs[self.reletive_position+1], self.reletive_position+1) # Display rightmost image from the list
-                self.reletive_position += 1
-                self.flag = True 
-                
-            elif position == 'up' and not self.flag:
-                # If the user tilts the device right (from landscape), this does nothing as of now.
-                self.flag = True
-            
-            elif not position:
-                self.flag = False # If the user returns the device to a neutral state, reset the self.flag variable
-                
-        except IndexError:
-            
-            # If user reaches end of the list of photos, wrap around to first image
-            self.reletive_position = 0
-            self.display_new(self.imgs[self.reletive_position], 0)
-            
-    
-    def get_key_commands(self):
-        return [{'input': 'right'}, {'input': 'left'}, {'input': 's'}, {'input': 'x', 'modifiers': 'cmd'}] # Which shortcuts are allowed
-    
-    def display_all(self):
-        # Handles letter "s" shortcut
-        filename = f'{self.filenames[self.reletive_position]}.png' # Get name of file that is being displayed
-                
-        # Write a file where the image can be quicklooked
-        with open(filename, 'wb') as tmp_file:
-            try:
-                tmp_file.write(self.photo_view.image.to_png())
-            except AttributeError:
-                return
-      
-        print(filename) if debug else None          
-        console.quicklook(filename) # Display image
-        os.remove(filename) # Remove temp file
-        
-    def key_command(self, sender):
-        try:
+        ui.ListDataSource.__init__(self, self.files)
 
-            # Handles keyboard input, which was defined in the class method get_key_commands
-            if sender['input'] == 'right' and not self.loading:            
-                
-                # If the user presses the right arrow key, show image to the right of the list
-                self.display_new(self.imgs[self.reletive_position+1], self.reletive_position+1)
-                self.reletive_position += 1
-                
-            elif sender['input'] == 'left' and not self.loading:
-                
-                # If the user presses the left arrow key, show image to the left of the list
-                self.display_new(self.imgs[self.reletive_position-1], self.reletive_position-1)
-                self.reletive_position -= 1
-                
-            elif sender['input'] == 's' and not self.loading:
-                self.display_all()
-                
-            elif sender['input'] == 'x' and sender['modifiers'] == 'cmd':
-                self.close()
-                
-                    
-        except IndexError:
-            
-            # If user reaches end of the list of photos, wrap around to first image
-            self.reletive_position = 0
-            self.display_new(self.imgs[self.reletive_position], 0)
+    def tableview_number_of_rows(self, tableview, section):
+        return len(self.files)
+
+    def tableview_cell_for_row(self, tableview, section, row):
+        cell = ui.TableViewCell()
+        cell.text_label.text = self.files[row]
+        cell.text_label.text_color = file_colour
+        cell.text_label.font = font
+        cell.selected_background_view = ui.View(background_color=title_bar_color)
+        
+        cell.background_color = background_color
     
-    def will_close(self):
-        self.main_class.photoview = False
-            
+        return cell
+        
+    def tableview_title_for_header(self, tableview, section):
+        # Return a title for the given section.
+        return 'Images'
+    
+    @ui.in_background
+    def tableview_did_select(self, tableview, section, row):
+        
+        if self.added_files and len(self.added_files)-1 >= row:
+            folder_contents = [f'./ImgView/{file}' for file in self.added_files]
+            console.quicklook(folder_contents)
+        else:
+            print('This image has not downloaded yet.')
+    
+    
+        
+        
+
 View = SInteractivePanel() # Make an instance of the main script
 
 View.connect() # Establish connection to NAS
