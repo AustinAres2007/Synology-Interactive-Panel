@@ -589,7 +589,6 @@ class SInteractivePanel(ui.View):
                 
                 self._files = get_files()
                 
-                #c = (file['name'] for file in files if not file['isdir'] and str(file['name'].split('.')[-1]).lower() in photo_extensions)
                 c = get_files()
                 c = [item for item in c]
                 
