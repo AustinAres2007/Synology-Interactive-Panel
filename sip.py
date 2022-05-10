@@ -24,6 +24,7 @@ TODO:
     When opening an empty directory, there is no indication that the folder is empty, and could be mistaken that SiP has crashed (Change, Done)
     Add "Clear" option to the more menu of folders. This will clear the whole directory (Feature)
     Add digital left / right buttons on PhotoView to navigate through images (Function, Done)
+    Redesign how the UI works, as in; buggy, cannot be turned to portrait, and landscape does not work on iPhone (Change)
     
     - Bugs / Issues
     
@@ -40,12 +41,12 @@ import ui
 import console 
 import os
 import dialogs
-import motion
 import io
 import requests
 import objc_util
 import photos
 import shutil
+import threading
 
 from nas.auth import AuthenticationError
 from requests.exceptions import ConnectionError
@@ -119,21 +120,43 @@ contents = lambda dir_c: ((file.title, file.subviews[1].title) for file in dir_c
 
 UIDevice = objc_util.ObjCClass('UIDevice').currentDevice()
 orientation = UIDevice.orientation()
-
-default_width = w*1/7 if orientation == 3 else w*1/5
+    
 default_height = h*1/5
 files_per_row = cfg['files_per_row']
 
-spacing = cfg['spacing']
-spacing -= round((spacing/2)*((h % 834.0)*1/spacing))
-
+auto_mode = cfg['auto_mode']
 font = (cfg['font'], cfg['font_size'])
 interval = cfg['interval']
 debug = cfg['debug']
 blunt = cfg['blunt']
+flex = cfg['flex']
+spacing = cfg['spacing']
+scale = cfg['scale']
+offset = cfg['offset']
+
+if cfg['orientation'] in ('panel') and auto_mode:
+    offset = 14
+    scale = 3
+    spacing = 50
+    files_per_row = 6
+    
+elif cfg['orientation'] == 'full_screen' and auto_mode:
+    offset = 25
+    scale = 3
+    spacing = 65
+    files_per_row = 3
+    
+elif cfg['orientation'] not in ('full_screen', 'panel') and auto_mode:
+    console.alert(f'Orientation setting: {cfg["orientation"]} not supported. Only full_screen, and panel are supported.')
+else:
+    pass
+    
+    
 
 animation_length = cfg['anime_length']
 
+frame_val = 1000
+        
 motion_controls = cfg['motion_controls']
 picker = 'black'
 assets = {}
@@ -150,31 +173,35 @@ unicode_file = ['txt', 'py', 'json', 'js', 'c', 'cpp', 'ini']
 special_extensions = ['csv', 'pdf', 'docx']
 
 print(f' < Debug Config > \n\nSpacing: {spacing}\nFiles Per Row: {files_per_row}\nWidth: {w}\nHeight: {h}\n\n-----\n\n') if debug else None
+
 def make_buttons(*args):
+    fpr = args[1][-1]
     for subview in args[2].subviews:
         args[2].remove_subview(subview)
         
     old_dim = args[1]
-    
-    x = 0
     y = spacing
     
     for i, element in enumerate(args[0]):
         item = ui.Button()
             
-        if i % files_per_row == 0 and i != 0:
-            y += 210
+        if i % fpr == 0 and i != 0:
+            y += 200
             x = args[1][0]
+            
         elif args[1]:
-            x = (old_dim[2]+old_dim[0]+spacing) 
+            divisor = 0+(1 if fpr <= 3 else (2*(fpr-3)))
+            x = (old_dim[2]+old_dim[0]+spacing/divisor) 
         
         item.border_width = int(element[0])
         item.border_color = element[1]
         item.title = element[4]
-        item.frame = (x, y, default_width, default_height) if i else args[1]
-        old_dim = item.frame if i else args[1]
+        item.frame = (x, y, args[1][2], args[1][3]) if i else args[1]
         
-        item.autoresizing = 'WH'
+        old_dim = item.frame if i else args[1]
+    
+        item.flex = flex
+        item.autoresizing = flex
         item.image = element[5]
         item.tint_color = element[6]
         item.name = element[7]
@@ -185,12 +212,13 @@ def make_buttons(*args):
 class SInteractivePanel(ui.View):
     def __init__(self):
         try:
-            
+            self.fpr = files_per_row
             self.text = 'Loading'
-            self.center = (w/2, h/2)
             self.background_color = background_color # Background color of View
             self.name = root 
-            
+            self.flex = flex
+            self.frame = (0, 0, frame_val, frame_val)
+            self.center = (frame_val/2, frame_val/2)
             # Make new scroll view
             
             self.scroll_view = ui.ScrollView()
@@ -202,10 +230,10 @@ class SInteractivePanel(ui.View):
             
             # Define the scrollable area, only done on initialisation, when going through folders, it's done in render_view
             
-            self.scroll_view.height = h
-            self.scroll_view.width = w
+            self.scroll_view.frame = self.frame
             self.scroll_view.content_size = (w, h)
-            self.file_display_formula = (self.width/files_per_row, spacing, default_width, default_height)
+            self.scroll_view.flex = flex
+            
             # Esablish connection, this will continue until script is closed
             
             self.left_button_items = [ui.ButtonItem(image=ui.Image.named('iob:chevron_left_32'), tint_color=file_colour, action=lambda _: self.go_back(), enabled=True)]
@@ -218,9 +246,20 @@ class SInteractivePanel(ui.View):
             self.subviews[0].alpha = 0.0
             self.add_subview(self.scroll_view) # Display the files in the root
             self.render_view(root)
+            
         except ConnectionError: # If no connection
             console.alert('No Connection')
     
+    def layout(self):
+        
+        if self.height > self.width and cfg['orientation'] != 'full_screen':
+            self.fpr = 4
+        elif cfg['orientation'] != 'full_screen':
+            self.fpr = 6
+            
+        self.render_view(self.name)
+            
+        
     def make_media(self):
         file_or_folder = console.alert('New', '', 'File', 'Folder')
         name = console.input_alert('Media Name', '')
@@ -269,6 +308,7 @@ class SInteractivePanel(ui.View):
     def render_view(self, sender):
         if not self.load_buffer and not self.photoview and (isinstance(sender, ui.Button) and (sender.title == 'Login' or sender.image.name.endswith('folder.png'))) or isinstance(sender, str) :
             try:
+                self.file_display_formula = (frame_val*1/offset, spacing, frame_val/(scale*2), frame_val/(scale*2), self.fpr)
                 self.subviews[0].text = 'Loading'
                 self.load_buffer = True
                 path = sender.name if isinstance(sender, ui.Button) else sender
@@ -288,40 +328,37 @@ class SInteractivePanel(ui.View):
                     else:
                         console.hud_alert(f"you are missing permissions to this directory.", 'error', 3.5) 
                     
-                button_metadata = ([0, file_colour, lambda _: self.render_view, h*1/8, item['name'], assets['folder'] if item['isdir'] else (assets['file'] if item['name'].split('.')[-1].lower() in unicode_file else (assets['photo'] if item['name'].split('.')[-1].lower() in photo_extensions else (assets['video'] if item['name'].split('.')[-1].lower() in video_extensions else (assets['audio'] if item['name'].split('.')[-1].lower() in audio_extensions else assets['file'])))), file_colour, item['path']] for item in contents)
+                button_metadata = ([1 if debug else 0, file_colour, lambda _: self.render_view, h*1/8, item['name'], assets['folder'] if item['isdir'] else (assets['file'] if item['name'].split('.')[-1].lower() in unicode_file else (assets['photo'] if item['name'].split('.')[-1].lower() in photo_extensions else (assets['video'] if item['name'].split('.')[-1].lower() in video_extensions else (assets['audio'] if item['name'].split('.')[-1].lower() in audio_extensions else assets['file'])))), file_colour, item['path']] for item in contents)
                 buttons = make_buttons(button_metadata, self.file_display_formula, self.scroll_view)
                 dir_status = {}
                 
                 for item in contents:
                     dir_status[item['name']] = item['isdir']
-                
+            
                 for ind, bnt in enumerate(buttons):
-                    file_lable = ui.Label()
-                    self.bnts.append(ui.Button())
+                    file_lable = ui.Label(height=30, width=bnt.width-5)
+                    self.bnts.append(ui.Button(height=25, width=25))
                     
-                    lt = len(bnt.title)
-                    wdt = ((lt / lt*2.1)) if lt > 8 else (lt / 7)
-                    wd_multi = (1.5/2)-(1/8) if str(UIDevice.model()) == 'iPad' else (3/4)
+                    bnt.add_subview(file_lable)
+                    bnt.add_subview(self.bnts[ind])
                     
                     file_lable.text = bnt.title
-                    file_lable.x = bnt.width*wdt/10
-                    file_lable.y = bnt.height*.65
-                    file_lable.alignment = ui.ALIGN_RIGHT
-                    file_lable.line_break_mode = ui.LB_TRUNCATE_TAIL                
+                    file_lable.x = file_lable.width-file_lable.width+10
+                    file_lable.y = file_lable.width-20        
                     file_lable.font = font
                     file_lable.text_color = file_colour
-                    file_lable.width = bnt.width * wd_multi
-                
-                    self.bnts[ind].x = -bnt.width*1/8
-                    self.bnts[ind].y = -bnt.width*1/5
-                    self.bnts[ind].width = self.bnts[ind].height = 100
+                    file_lable.flex = flex
+                    file_lable.border_width = 1 if debug else 0
+                    
+
+                    self.bnts[ind].x = 15
+                    self.bnts[ind].y = 5
+                    self.bnts[ind].flex = flex
+                    self.bnts[ind].border_width = 1 if debug else 0
                     self.bnts[ind].image = assets['opt']
                     self.bnts[ind].title = str(dir_status[bnt.title])
                     self.bnts[ind].name = bnt.title
                     self.bnts[ind].action = lambda _: self.context_menu(self.bnts[ind])
-                    
-                    bnt.add_subview(file_lable)
-                    bnt.add_subview(self.bnts[ind])
                     
                     self.scroll_view.add_subview(bnt)
                 
@@ -370,9 +407,6 @@ class SInteractivePanel(ui.View):
         x_old = 0
         data = []
         time = int(interval/5)
-        
-        # TODO: Instead of using the View name as the display, use something else, and not a print statment, this is temporary
-        print(f'Estimating, wait {time} second(s)')
         
         for y in range(time):
             sleep(1)
@@ -464,7 +498,6 @@ class SInteractivePanel(ui.View):
         
     def rename_file(self, sender_data):
         name = str(console.input_alert('Please chose new name.'))
-        print(f'{self.name}/{sender_data.name}', name)
         
         self.nas.rename_folder(f'{self.name}/{sender_data.name}', name)
     
@@ -589,6 +622,7 @@ class SInteractivePanel(ui.View):
                 
                 self._files = get_files()
                 
+                #c = (file['name'] for file in files if not file['isdir'] and str(file['name'].split('.')[-1]).lower() in photo_extensions)
                 c = get_files()
                 c = [item for item in c]
                 
@@ -684,10 +718,7 @@ class ImgViewDelegate(ui.ListDataSource):
             console.quicklook(folder_contents)
         else:
             print('This image has not downloaded yet.')
-    
-    
-        
-        
+
 
 View = SInteractivePanel() # Make an instance of the main script
 
