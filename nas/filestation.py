@@ -8,7 +8,10 @@ from typing import Generator
 from urllib import parse
 
 from . import auth as syn
-    
+
+class UploadError(BaseException):
+    pass
+       
 class FileStation:
 
     def __init__(self, ip_address, port, username, password, secure=False, cert_verify=False, dsm_version=7, debug=True, otp_code=None):
@@ -493,7 +496,7 @@ class FileStation:
                 'create_parents': str(create_parents).lower(),
                 'overwrite': str(overwrite).lower(),
             }
-
+            
             files = {'file': (filename, payload, 'application/octet-stream')}
 
             r = session.post(url, data=args, files=files, verify=verify)
@@ -501,7 +504,9 @@ class FileStation:
             if r.status_code == 200 and r.json()['success']:
                 return 'Upload Complete'
             else:
-                return r.status_code, r.json()
+                if not r.json()['success']:
+                    if r.json()['error']['code'] == 401:
+                        raise UploadError('Cannot upload files with foreign characters within the name, nor can the contents.')
 
     def get_shared_link_info(self, link_id=None):
         api_name = 'SYNO.FileStation.Sharing'
