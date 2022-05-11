@@ -24,16 +24,22 @@ TODO:
     When opening an empty directory, there is no indication that the folder is empty, and could be mistaken that SiP has crashed (Change, Done)
     Add "Clear" option to the more menu of folders. This will clear the whole directory (Feature)
     Add digital left / right buttons on PhotoView to navigate through images (Function, Done)
-    Redesign how the UI works, as in; buggy, cannot be turned to portrait, and landscape does not work on iPhone (Change)
+    Add copy and paste ability (Function)
+    Add gestures, self note: make a delegate of scrollview to start (Function)
     
     - Bugs / Issues
-    
+
     When logged in with an account that is missing permissions, it returns no graceful error. (Bug, Fixed)
     When spamming Q or E (To go back a directory, or to go forward) when done enough, SiP will freeze. (Bug, Fixed)
     When using motion controls with PhotoView, SiP will also respond to these. (Bug, Fixed)
     When renaming a file, any file, SiP will freeze. (Bug, Fixed)
     Cannot open PDF files. (Bug, Fixed)
     When the remainder of files in a directory is 2, the you can overshoot the files a little bit (Issue, Fixed)
+    When switching SiP to portrait mode, the files misalign a little bit (Bug)
+    on iPhone, scrolling does not work properly when near the end of a directory (Bug)
+    When opening / making files with a foreign character (Example: A Chinese or Japanese character) the file cannot open (Bug)
+    The name of a file is not centered properly, this is because the asset for files are smaller than folders (Bug)
+
     
 '''
 
@@ -46,25 +52,25 @@ import requests
 import objc_util
 import photos
 import shutil
-import threading
 
+from math import floor
 from nas.auth import AuthenticationError
 from requests.exceptions import ConnectionError
 from threading import Thread
 from sys import argv, exit
 from time import sleep
-from hurry.filesize import size as s
-from hurry.filesize import verbose
 
 try:
     import config
     
+    from hurry.filesize import size as s
+    from hurry.filesize import verbose
     from nas import filestation
-    from nas.auth import AuthenticationError
     
 except ModuleNotFoundError as e:
-    print(f'"config" or "nas" module not found.\n\nActual Error: {e}'); exit(1)
-    
+    print(f'"config", "nas" or "hurry" module not found.\n\nActual Error: {e}'); exit(1)
+
+global offset
 cfg = config.Config('sip-config.cfg')
 w, h = ui.get_screen_size()
 
@@ -122,42 +128,39 @@ UIDevice = objc_util.ObjCClass('UIDevice').currentDevice()
 orientation = UIDevice.orientation()
     
 default_height = h*1/5
-files_per_row = cfg['files_per_row']
 
+files_per_row = cfg['files_per_row']
 auto_mode = cfg['auto_mode']
 font = (cfg['font'], cfg['font_size'])
 interval = cfg['interval']
 debug = cfg['debug']
-blunt = cfg['blunt']
 flex = cfg['flex']
 spacing = cfg['spacing']
 scale = cfg['scale']
 offset = cfg['offset']
+animation_length = cfg['anime_length']
+style = cfg['orientation']
 
-if cfg['orientation'] in ('panel') and auto_mode:
-    offset = 14
+if style == 'panel' and auto_mode:
+    offset = 16 if str(UIDevice.model()) == 'iPad' else 50
     scale = 3
     spacing = 50
     files_per_row = 6
     
-elif cfg['orientation'] == 'full_screen' and auto_mode:
+elif style == 'full_screen' and auto_mode:
     offset = 25
     scale = 3
     spacing = 65
     files_per_row = 3
     
-elif cfg['orientation'] not in ('full_screen', 'panel') and auto_mode:
-    console.alert(f'Orientation setting: {cfg["orientation"]} not supported. Only full_screen, and panel are supported.')
+elif style not in ('full_screen', 'panel') and auto_mode:
+    console.alert(f'Orientation setting: {style} not supported. Only full_screen, and panel are supported.')
 else:
     pass
-    
-    
-
-animation_length = cfg['anime_length']
 
 frame_val = 1000
         
-motion_controls = cfg['motion_controls']
+
 picker = 'black'
 assets = {}
 
@@ -174,8 +177,11 @@ special_extensions = ['csv', 'pdf', 'docx']
 
 print(f' < Debug Config > \n\nSpacing: {spacing}\nFiles Per Row: {files_per_row}\nWidth: {w}\nHeight: {h}\n\n-----\n\n') if debug else None
 
+
 def make_buttons(*args):
+
     fpr = args[1][-1]
+    
     for subview in args[2].subviews:
         args[2].remove_subview(subview)
         
@@ -212,6 +218,8 @@ def make_buttons(*args):
 class SInteractivePanel(ui.View):
     def __init__(self):
         try:
+            self.touch_enabled = False
+            self.multitouch_enabled = True
             self.fpr = files_per_row
             self.text = 'Loading'
             self.background_color = background_color # Background color of View
@@ -225,22 +233,24 @@ class SInteractivePanel(ui.View):
             self.tint_color = file_colour
  
             self.avg = self.bnts = []
-            self.nas = self.last_folder = None
+            self.item = self.nas = self.last_folder = None
             self.off = self.photoview = self.load_buffer = self.is_pointing = self.download = False
+            
+            self.file_display_formula = (frame_val*1/offset, spacing, frame_val/(scale*2), frame_val/(scale*2), self.fpr)
             
             # Define the scrollable area, only done on initialisation, when going through folders, it's done in render_view
             
             self.scroll_view.frame = self.frame
             self.scroll_view.content_size = (w, h)
             self.scroll_view.flex = flex
-            
+  
             # Esablish connection, this will continue until script is closed
             
             self.left_button_items = [ui.ButtonItem(image=ui.Image.named('iob:chevron_left_32'), tint_color=file_colour, action=lambda _: self.go_back(), enabled=True)]
             self.right_button_items = [ui.ButtonItem(image=ui.Image.named('typb:Write'), tint_color=file_colour, action=lambda _: self.make_media(), enabled=True), ui.ButtonItem(image=ui.Image.named('typb:Archive'), tint_color=file_colour, action=lambda _: self.import_foreign_media(), enabled=True)]
             
             x = (self.center[0 if orientation == 3 else 1]/(2 if str(UIDevice.model())=='iPad' else 3))+.5
-            self.add_subview(ui.Label(name='ld', text=self.text, x=x, y=self.center[1]/2, alignment=ui.ALIGN_CENTER, font=font, text_color=file_colour))
+            self.add_subview(ui.Label(name='ld', text=self.text, x=x, y=self.center[1]/2, alignment=ui.ALIGN_CENTER, font=font,   text_color=file_colour))
             
             
             self.subviews[0].alpha = 0.0
@@ -249,16 +259,17 @@ class SInteractivePanel(ui.View):
             
         except ConnectionError: # If no connection
             console.alert('No Connection')
+            self.close()
     
     def layout(self):
+        self.fpr = floor((self.width-spacing)/(frame_val/(scale*2)))
+        self.file_display_formula = (frame_val*1/offset, spacing, frame_val/(scale*2), frame_val/(scale*2), self.fpr)
         
-        if self.height > self.width and cfg['orientation'] != 'full_screen':
-            self.fpr = 4
-        elif cfg['orientation'] != 'full_screen':
-            self.fpr = 6
-            
         self.render_view(self.name)
             
+    
+    def touch_began(self, touch):
+        print(dir(touch))
         
     def make_media(self):
         file_or_folder = console.alert('New', '', 'File', 'Folder')
@@ -269,14 +280,18 @@ class SInteractivePanel(ui.View):
             console.hud_alert(f'Made new folder: {name} at {self.name}')
         else:
             text = dialogs.text_dialog(name)
-            with open(name, 'w+') as tmp_file:
-                tmp_file.write(text)
             
-            self.nas.upload_file(self.name, name)
-            os.remove(name)
+            try:
+                with open(name, 'w+', encoding='utf-8') as tmp_file:
+                    tmp_file.write(text if text else '')
             
-            console.hud_alert('Uploaded Successfully')
+                self.nas.upload_file(self.name, name) 
+                os.remove(name)
             
+                console.hud_alert('Uploaded Successfully')
+            except filestation.UploadError:
+                console.alert('Upload failed, cannot upload files with foreign letters, in the name of the file or the contents.')
+                
         self.render_view(self.name)
             
         
@@ -284,9 +299,9 @@ class SInteractivePanel(ui.View):
         try:
             self.nas = filestation.FileStation(url, port, user, passw, secure=True, debug=debug)
         except AuthenticationError:
-            return console.alert('Invalid username / password')
+            return console.alert('Invalid username / password'); exit(1)
         except ConnectionError:
-            return console.alert('No Internet connection')
+            return console.alert('No Internet connection'); exit(1)
     
     def animation_on_ld(self):
         for x in range(0, 10):
@@ -308,7 +323,6 @@ class SInteractivePanel(ui.View):
     def render_view(self, sender):
         if not self.load_buffer and not self.photoview and (isinstance(sender, ui.Button) and (sender.title == 'Login' or sender.image.name.endswith('folder.png'))) or isinstance(sender, str) :
             try:
-                self.file_display_formula = (frame_val*1/offset, spacing, frame_val/(scale*2), frame_val/(scale*2), self.fpr)
                 self.subviews[0].text = 'Loading'
                 self.load_buffer = True
                 path = sender.name if isinstance(sender, ui.Button) else sender
@@ -321,12 +335,12 @@ class SInteractivePanel(ui.View):
                     contents = contents_d['data']['files']
                     
                 except AttributeError:
-                    return console.alert('No connection to NAS, typo?')
+                    return console.alert('No connection to NAS, typo?'); exit(1)
                 except KeyError:
                     if contents_d['error']['code'] == 119:
-                        console.hud_alert(f'Error, please reload script (Error code 119, cannot be fixed by author. Only Synology can fix this)')
+                        console.hud_alert(f'Error, please reload script (Error code 119, cannot be fixed by author. Only Synology can fix this)'); exit(1)
                     else:
-                        console.hud_alert(f"you are missing permissions to this directory.", 'error', 3.5) 
+                        console.hud_alert(f"you are missing permissions to this directory.", 'error', 3.5); exit(1)
                     
                 button_metadata = ([1 if debug else 0, file_colour, lambda _: self.render_view, h*1/8, item['name'], assets['folder'] if item['isdir'] else (assets['file'] if item['name'].split('.')[-1].lower() in unicode_file else (assets['photo'] if item['name'].split('.')[-1].lower() in photo_extensions else (assets['video'] if item['name'].split('.')[-1].lower() in video_extensions else (assets['audio'] if item['name'].split('.')[-1].lower() in audio_extensions else assets['file'])))), file_colour, item['path']] for item in contents)
                 buttons = make_buttons(button_metadata, self.file_display_formula, self.scroll_view)
@@ -367,10 +381,10 @@ class SInteractivePanel(ui.View):
                     self.scroll_view.subviews[o].add_subview(a)
                     
                 i = len(self.scroll_view.subviews)
-                r = round(i/files_per_row+i%files_per_row)-(2 if i%files_per_row==2 else 0)
+                r = round(i/self.fpr+i%self.fpr)-(2 if i%self.fpr==2 else 0)
                 
                 
-                self.scroll_view.content_size = (w/files_per_row, (default_height*r)+((210-default_height)*r)+210)
+                self.scroll_view.content_size = (w/self.fpr, (default_height*r)+((200-default_height)*r)+200)
                 self.name = path
                 
                 ui.animate(self.animation_off_ld, animation_length-.1)
@@ -431,7 +445,7 @@ class SInteractivePanel(ui.View):
         
         while round(current_size*100) != 100:
             sleep(0.1)
-            if scnd_counter % int(interval) == 0 and not blunt:
+            if scnd_counter % int(interval) == 0:
                 estimate = self.estimate_download(sender)
                 scnd_counter += 1
                 counter = 0
@@ -464,7 +478,7 @@ class SInteractivePanel(ui.View):
     @ui.in_background
     def context_menu(self, sender):
         if not self.photoview:
-            items = ['Download', 'Delete', 'Rename', 'Open', 'Info'] if not sender.title == 'True' else ['Delete', 'Rename', 'Open', 'Info']
+            items = ['Download', 'Delete', 'Rename', 'Open', 'Info', 'Copy'] if not sender.title == 'True' else ['Delete', 'Rename', 'Open', 'Info', 'Paste' if self.item else '']
             option = dialogs.list_dialog(title=sender.name, items=items)
         
             
@@ -478,12 +492,23 @@ class SInteractivePanel(ui.View):
                 self.open_file(sender)
             elif option == 'Info':
                 self.get_infomation(sender)
-    
+            elif option == 'Copy':
+                self.copy_file(sender)
+            elif option == 'Paste':
+                self.paste_item(sender)
+                
+                
+    def paste_item(self, sender):
+        self.nas.start_copy_move(self.item, f'{self.name}/{sender.name}')
+        console.hud_alert(f'Copied {self.item} to {self.name}/{sender.name}', duration=1.0)
+ 
+    def copy_file(self, sender):
+        self.item = f'{self.name}/{sender.name}'
+        
     def get_infomation(self, sender):
         try:
             self.nas.start_dir_size_calc(f'{self.name}/{sender.name}')
             filesize = self.nas.get_dir_status()['data']['total_size']
-            
             console.alert(f'{sender.name}\n{s(filesize, system=verbose)}\n{self.name}/{sender.name}')
         except Exception as e:
             console.alert(e)
@@ -632,7 +657,7 @@ class SInteractivePanel(ui.View):
                     self.photoview = True
                     
                     self.img_view = ImgViewMain(self)
-                    self.img_view.present('full_screen', title_bar_color=title_bar_color, title_color=file_colour, hide_close_button=True)
+                    self.img_view.present(style, title_bar_color=title_bar_color, title_color=file_colour, hide_close_button=True)
                     
                     self.photoview = False
                         
@@ -723,4 +748,4 @@ class ImgViewDelegate(ui.ListDataSource):
 View = SInteractivePanel() # Make an instance of the main script
 
 View.connect() # Establish connection to NAS
-View.present(cfg['orientation'], hide_close_button=True, title_bar_color=title_bar_color, title_color=file_colour) # Display initialised screen content
+View.present(style, hide_close_button=True, title_bar_color=title_bar_color, title_color=file_colour) # Display initialised screen content
