@@ -22,9 +22,9 @@ TODO:
     Open file by default when tapping on it (Change, Done)
     When going into more options on a folder and tapping "Open" just open the folder, don't return an error (Change, Done)
     When opening an empty directory, there is no indication that the folder is empty, and could be mistaken that SiP has crashed (Change, Done)
-    Add "Clear" option to the more menu of folders. This will clear the whole directory (Feature)
     Add digital left / right buttons on PhotoView to navigate through images (Function, Done)
-    Add copy and paste ability (Function)
+    Add copy and paste ability (Function, Done)
+    Add a way to view a download status (Function, Done)
     Add gestures, self note: make a delegate of scrollview to start (Function)
     
     - Bugs / Issues
@@ -36,11 +36,21 @@ TODO:
     Cannot open PDF files. (Bug, Fixed)
     When the remainder of files in a directory is 2, the you can overshoot the files a little bit (Issue, Fixed)
     When switching SiP to portrait mode, the files misalign a little bit (Bug)
-    on iPhone, scrolling does not work properly when near the end of a directory (Bug)
-    When opening / making files with a foreign character (Example: A Chinese or Japanese character) the file cannot open (Bug)
-    The name of a file is not centered properly, this is because the asset for files are smaller than folders (Bug)
+    on iPhone, scrolling does not work properly when near the end of a directory (Bug, Fixed)
+    When opening / making files with a foreign character (Example: A Chinese or Japanese character) the file cannot open (Bug, Temp Fix)
+    The name of a file is not centered properly, this is because the asset for files are smaller than folders (Bug, Fixed)
 
+    - Concepts
     
+    * In Cache *
+        
+        ImgView can save photos for later without having to load them again, I would like to add a system where SiP can tick which photos 
+        it has saved in cache
+        
+        < Issues >
+        
+        When viewing an image with the same name as another image in the cache, it will load the image in the cache and not the actual image stored. This could be fixed with some type of identifier, but what that will be, I do not know. Possibly a timestamp
+        
 '''
 
 import ui
@@ -71,6 +81,7 @@ except ModuleNotFoundError as e:
     print(f'"config", "nas" or "hurry" module not found.\n\nActual Error: {e}'); exit(1)
 
 global offset
+
 cfg = config.Config('sip-config.cfg')
 w, h = ui.get_screen_size()
 
@@ -177,7 +188,6 @@ special_extensions = ['csv', 'pdf', 'docx']
 
 print(f' < Debug Config > \n\nSpacing: {spacing}\nFiles Per Row: {files_per_row}\nWidth: {w}\nHeight: {h}\n\n-----\n\n') if debug else None
 
-
 def make_buttons(*args):
 
     fpr = args[1][-1]
@@ -215,11 +225,27 @@ def make_buttons(*args):
         
         yield item
 
+class CacheHandler:
+    
+    def __init__(self):
+        os.mkdir('ImgView') if not os.path.isdir('./ImgView') else None
+        self.ids = {}
+        
+    def _update_id_list(self) -> None:
+        self.ids = {int(file.split('-')[0]): file.split('-')[1:] for file in os.listdir('./ImgView') if str(file).split('.')[-1].lower() in photo_extensions}
+        
+    def get_all_ids(self) -> list:
+        self._update_id_list(); return self.ids
+    
+    def id_in_list(self, id: int) -> bool:
+        self._update_id_list(); return int(id) in list(self.ids)
+    
+    def get_file_from_id(self, id: int) -> str:
+        self._update_id_list(); return self.ids[id][0] if self.id_in_list(id) else 0
+        
 class SInteractivePanel(ui.View):
     def __init__(self):
         try:
-            self.touch_enabled = False
-            self.multitouch_enabled = True
             self.fpr = files_per_row
             self.text = 'Loading'
             self.background_color = background_color # Background color of View
@@ -227,12 +253,14 @@ class SInteractivePanel(ui.View):
             self.flex = flex
             self.frame = (0, 0, frame_val, frame_val)
             self.center = (frame_val/2, frame_val/2)
+            
             # Make new scroll view
             
             self.scroll_view = ui.ScrollView()
             self.tint_color = file_colour
  
-            self.avg = self.bnts = []
+            self.bnts = []
+            self.copied = []
             self.item = self.nas = self.last_folder = None
             self.off = self.photoview = self.load_buffer = self.is_pointing = self.download = False
             
@@ -243,14 +271,14 @@ class SInteractivePanel(ui.View):
             self.scroll_view.frame = self.frame
             self.scroll_view.content_size = (w, h)
             self.scroll_view.flex = flex
-  
+            
             # Esablish connection, this will continue until script is closed
             
-            self.left_button_items = [ui.ButtonItem(image=ui.Image.named('iob:chevron_left_32'), tint_color=file_colour, action=lambda _: self.go_back(), enabled=True)]
+            self.left_button_items = [ui.ButtonItem(image=ui.Image.named('iob:chevron_left_32'), tint_color=file_colour, action=lambda _: self.go_back(), enabled=True), ui.ButtonItem(image=ui.Image.named('typb:Spanner'), tint_color=file_colour, action=lambda _: self.nas_console(), enabled=True)]
             self.right_button_items = [ui.ButtonItem(image=ui.Image.named('typb:Write'), tint_color=file_colour, action=lambda _: self.make_media(), enabled=True), ui.ButtonItem(image=ui.Image.named('typb:Archive'), tint_color=file_colour, action=lambda _: self.import_foreign_media(), enabled=True)]
             
-            x = (self.center[0 if orientation == 3 else 1]/(2 if str(UIDevice.model())=='iPad' else 3))+.5
-            self.add_subview(ui.Label(name='ld', text=self.text, x=x, y=self.center[1]/2, alignment=ui.ALIGN_CENTER, font=font,   text_color=file_colour))
+
+            self.add_subview(ui.Label(name='ld', text=self.text, x=self.center[0], y=self.center[1]/2, alignment=ui.ALIGN_LEFT, font=font,   text_color=file_colour))
             
             
             self.subviews[0].alpha = 0.0
@@ -260,17 +288,23 @@ class SInteractivePanel(ui.View):
         except ConnectionError: # If no connection
             console.alert('No Connection')
             self.close()
-    
+        
     def layout(self):
         self.fpr = floor((self.width-spacing)/(frame_val/(scale*2)))
         self.file_display_formula = (frame_val*1/offset, spacing, frame_val/(scale*2), frame_val/(scale*2), self.fpr)
         
         self.render_view(self.name)
-            
     
-    def touch_began(self, touch):
-        print(dir(touch))
-        
+    
+    def nas_console(self):
+        command = console.input_alert('Debug Console')
+            
+        if command == 'clear':
+            shutil.rmtree('./ImgView')
+            os.mkdir('ImgView')
+            
+            print('Cleared ImageView Cache')
+            
     def make_media(self):
         file_or_folder = console.alert('New', '', 'File', 'Folder')
         name = console.input_alert('Media Name', '')
@@ -298,6 +332,8 @@ class SInteractivePanel(ui.View):
     def connect(self):
         try:
             self.nas = filestation.FileStation(url, port, user, passw, secure=True, debug=debug)
+            self.cache = CacheHandler()
+            
         except AuthenticationError:
             return console.alert('Invalid username / password'); exit(1)
         except ConnectionError:
@@ -331,8 +367,10 @@ class SInteractivePanel(ui.View):
                     ui.animate(self.animation_off, animation_length)  
                     ui.animate(self.animation_on_ld, animation_length-.1)
                     
-                    contents_d = self.nas.get_file_list(path)
+                    contents_d = self.nas.get_file_list(path, additional='time')
                     contents = contents_d['data']['files']
+                    
+                    file_id_list = [id_stamp['additional']['time']['crtime'] for id_stamp in contents]
                     
                 except AttributeError:
                     return console.alert('No connection to NAS, typo?'); exit(1)
@@ -350,21 +388,31 @@ class SInteractivePanel(ui.View):
                     dir_status[item['name']] = item['isdir']
             
                 for ind, bnt in enumerate(buttons):
-                    file_lable = ui.Label(height=30, width=bnt.width-5)
+                    id_ = file_id_list[ind]
+                    
+                    if self.cache.id_in_list(id_):
+                        cache_check = ui.ImageView(image=assets['cache'], height=20, width=25, x=98, y=30, border_width = 1 if debug else 0)
+                        bnt.add_subview(cache_check)
+                        
+                        
+                    file_lable = ui.Label(height=30)
                     self.bnts.append(ui.Button(height=25, width=25))
                     
                     bnt.add_subview(file_lable)
                     bnt.add_subview(self.bnts[ind])
                     
                     file_lable.text = bnt.title
-                    file_lable.x = file_lable.width-file_lable.width+10
-                    file_lable.y = file_lable.width-20        
+                    file_lable.x = (10 if str(bnt.image.name).endswith('folder.png') else 40)
+                    file_lable.y = bnt.width-25   
+                    file_lable.width = 160-file_lable.x
+                    
                     file_lable.font = font
                     file_lable.text_color = file_colour
                     file_lable.flex = flex
                     file_lable.border_width = 1 if debug else 0
+                    file_lable.line_break_mode = ui.LB_TRUNCATE_TAIL
                     
-
+                    
                     self.bnts[ind].x = 15
                     self.bnts[ind].y = 5
                     self.bnts[ind].flex = flex
@@ -407,7 +455,8 @@ class SInteractivePanel(ui.View):
                 
         elif sender.image.name.split('.')[-1] in unicode_file+special_extensions+photo_extensions:
             sender.enabled = False
-            self.open_file(sender, True)
+            f_id = self.nas.get_file_info(f'{self.name}/{sender.title}', additional='time')['data']['files'][0]['additional']['time']['crtime']
+            self.open_file(sender, True, f_id)
             
     
     def go_back(self):
@@ -430,18 +479,14 @@ class SInteractivePanel(ui.View):
             data.append(bytes)
             x_old = x
         
-        avg = averg(data)
-        self.avg.append(avg)
-        
-        return avg
+        return averg(data)
             
     def check_download_status(self, sender) -> None:
         self.nas.start_dir_size_calc(f'{self.name}/{sender.name}')
         
         size: int = int(self.nas.get_dir_status()['data']['total_size'])
-        scnd_counter = start = counter = 0
+        current_size = scnd_counter = start = counter = 0
         estimate = None
-        current_size = 0
         
         while round(current_size*100) != 100:
             sleep(0.1)
@@ -472,13 +517,12 @@ class SInteractivePanel(ui.View):
                 counter += 1
         
         self.download = False
-        avg_speed = s(averg(self.avg), system=verbose)
-        console.alert(f'Finished Download, average download speed was {avg_speed}') 
+        console.alert(f'Finished Download') 
     
     @ui.in_background
     def context_menu(self, sender):
         if not self.photoview:
-            items = ['Download', 'Delete', 'Rename', 'Open', 'Info', 'Copy'] if not sender.title == 'True' else ['Delete', 'Rename', 'Open', 'Info', 'Paste' if self.item else '']
+            items = ['Download', 'Delete', 'Rename', 'Open', 'Info', 'Copy', 'Download Status' if self.download else ''] if not sender.title == 'True' else ['Delete', 'Rename', 'Open', 'Info', 'Paste' if self.copied else '']
             option = dialogs.list_dialog(title=sender.name, items=items)
         
             
@@ -496,14 +540,20 @@ class SInteractivePanel(ui.View):
                 self.copy_file(sender)
             elif option == 'Paste':
                 self.paste_item(sender)
+            elif option == 'Download Status':
+                self.display_download_status(sender)
                 
                 
+    @ui.in_background
+    def display_download_status(self, *args):
+        console.alert(self.download) 
+                   
     def paste_item(self, sender):
-        self.nas.start_copy_move(self.item, f'{self.name}/{sender.name}')
-        console.hud_alert(f'Copied {self.item} to {self.name}/{sender.name}', duration=1.0)
+        self.nas.start_copy_move(self.copied, f'{self.name}/{sender.name}')
+        console.hud_alert(f'Copied {len(self.copied)} items to "{self.name}/{sender.name}"', duration=1.0)
  
     def copy_file(self, sender):
-        self.item = f'{self.name}/{sender.name}'
+        self.copied.append(f'{self.name}/{sender.name}')
         
     def get_infomation(self, sender):
         try:
@@ -557,10 +607,7 @@ class SInteractivePanel(ui.View):
         elif sender['input'] == 'e' and self.last_folder:
             self.render_view(self.last_folder)
         elif sender['input'] == 't' and sender['modifiers'] == 'cmd':
-            command = console.input_alert('Debug Console')
-            
-            if command == 'clear':
-                shutil.rmtree('./ImgView')
+            self.nas_console()
     
     def import_foreign_media(self):
         
@@ -601,7 +648,7 @@ class SInteractivePanel(ui.View):
         self.render_view(path)  
         
     @ui.in_background
-    def open_file(self, sender_data, file=None):
+    def open_file(self, sender_data, file=None, id: int=None):
         try:
             os.mkdir('output')
         except FileExistsError:
@@ -625,18 +672,22 @@ class SInteractivePanel(ui.View):
                 
                 if file_extension in photo_extensions+unicode_file+special_extensions:
                     
-                    with open(true_name, 'wb') as file:
-                        with io.BytesIO(requests.get(link).content) as data:
-                            file.write(data.getvalue())
-                
-                    if file_extension in photo_extensions+special_extensions:
-                        console.quicklook(true_name)
+                    if id and not self.cache.id_in_list(id):
+                        with open(true_name, 'wb') as file:
+                            with io.BytesIO(requests.get(link).content) as data:
+                                file.write(data.getvalue())
+                    
+                        if file_extension in photo_extensions+special_extensions:
+                            console.quicklook(true_name)
+                        else:
+                            with open(true_name, 'r') as r_file:
+                                dialogs.text_dialog(title=true_name, text=r_file.read())
+                       
+                        os.remove(true_name)
+                        sender_data.enabled = True
                     else:
-                        with open(true_name, 'r') as r_file:
-                            dialogs.text_dialog(title=true_name, text=r_file.read())
-                   
-                    os.remove(true_name)
-                    sender_data.enabled = True 
+                        image_ = self.cache.get_file_from_id(id)
+                        console.quicklook(f'./ImgView/{id}-{image_}')
                     
                 else:
                     console.alert('Cannot open this file.')
@@ -647,7 +698,6 @@ class SInteractivePanel(ui.View):
                 
                 self._files = get_files()
                 
-                #c = (file['name'] for file in files if not file['isdir'] and str(file['name'].split('.')[-1]).lower() in photo_extensions)
                 c = get_files()
                 c = [item for item in c]
                 
@@ -677,16 +727,16 @@ class ImgViewMain(ui.View):
         
         self.add_subview(tb)        
 
-        
-        
 class ImgViewDelegate(ui.ListDataSource):
     def get_image(self, url, fn): # Downloads an Image
         if not os.path.isdir('ImgView'):
             os.mkdir('ImgView')
             
         try:
-                
-            with open(f'./ImgView/{fn}', 'wb') as file:
+            time = self.sip.nas.get_file_info(f'{self.sip.name}/{self.sip._s_dir}/{fn}', additional='time')['data']['files'][0]['additional']['time']['crtime']
+            self.cache_name[fn] = f'{time}-{fn}'
+            
+            with open(f'./ImgView/{time}-{fn}', 'wb') as file:
                 with io.BytesIO(requests.get(url).content) as b: # Download Image from URL
                     file.write(b.getvalue())
             
@@ -700,20 +750,22 @@ class ImgViewDelegate(ui.ListDataSource):
         self.sip = sip
         self.files = [file for file in sip._files]
         self.added_files = []
+        self.cache_name = {}
         
-        for x in range(0, len(self.files)): # Iterate for every file in the directory (that is an image)
+        files_id_fetch = sip.nas.get_file_list(f'{sip.name}/{sip._s_dir}', additional='time')['data']['files']
+        ids = {item_sctr['name']: item_sctr['additional']['time']['crtime'] for item_sctr in files_id_fetch}
+        
+        for fn in self.files: # Iterate for every file in the directory (that is an image)
             try:
-                
-                fn = self.files[x]
-                if not os.path.isfile(f'./ImgView/{fn}'):
-                    Thread(target=self.get_image, args=(sip.nas.get_download_url(f'{sip.name}/{sip._s_dir}/{self.files[x]}'), fn,)).start() # Download the Image
+                if not os.path.isfile(f'./ImgView/{ids[fn]}-{fn}'):
+                    Thread(target=self.get_image, args=(sip.nas.get_download_url(f'{sip.name}/{sip._s_dir}/{fn}'), fn,)).start() # Download the Image
                 
                 else:
+                    self.cache_name[fn] = f'{ids[fn]}-{fn}'
                     self.added_files.append(fn)
                     
             except IndexError: # Dunno why this exception in here, thoughts it may break
                 break
-        
         
         ui.ListDataSource.__init__(self, self.files)
 
@@ -725,10 +777,10 @@ class ImgViewDelegate(ui.ListDataSource):
         cell.text_label.text = self.files[row]
         cell.text_label.text_color = file_colour
         cell.text_label.font = font
-        cell.selected_background_view = ui.View(background_color=title_bar_color)
         
         cell.background_color = background_color
-    
+        cell.selected_background_view = ui.View(background_color=title_bar_color)
+        
         return cell
         
     def tableview_title_for_header(self, tableview, section):
@@ -739,11 +791,11 @@ class ImgViewDelegate(ui.ListDataSource):
     def tableview_did_select(self, tableview, section, row):
         
         if self.added_files and len(self.added_files)-1 >= row:
-            folder_contents = [f'./ImgView/{file}' for file in self.added_files]
+            folder_contents = [f'./ImgView/{self.cache_name[file]}' for file in self.added_files]
             console.quicklook(folder_contents)
         else:
             print('This image has not downloaded yet.')
-
+    
 
 View = SInteractivePanel() # Make an instance of the main script
 
