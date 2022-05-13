@@ -51,6 +51,10 @@ TODO:
         
         When viewing an image with the same name as another image in the cache, it will load the image in the cache and not the actual image stored. This could be fixed with some type of identifier, but what that will be, I do not know. Possibly a timestamp
         
+        < Final Goal >
+        
+        Make an offline mode, where if you cannot connect to the internet, you can still view photos / files from the cache.
+        
 '''
 
 import ui
@@ -79,8 +83,6 @@ try:
     
 except ModuleNotFoundError as e:
     print(f'"config", "nas" or "hurry" module not found.\n\nActual Error: {e}'); exit(1)
-
-global offset
 
 cfg = config.Config('sip-config.cfg')
 w, h = ui.get_screen_size()
@@ -169,7 +171,7 @@ elif style not in ('full_screen', 'panel') and auto_mode:
 else:
     pass
 
-frame_val = 1000
+frame_val = 1020
         
 
 picker = 'black'
@@ -232,7 +234,7 @@ class CacheHandler:
         self.ids = {}
         
     def _update_id_list(self) -> None:
-        self.ids = {int(file.split('-')[0]): file.split('-')[1:] for file in os.listdir('./ImgView') if str(file).split('.')[-1].lower() in photo_extensions}
+        self.ids = {int(file.split('-')[0]): '-'.join(file.split('-')[1:]) for file in os.listdir('./ImgView') if str(file).split('.')[-1].lower() in photo_extensions+unicode_file+special_extensions}
         
     def get_all_ids(self) -> list:
         self._update_id_list(); return self.ids
@@ -241,7 +243,7 @@ class CacheHandler:
         self._update_id_list(); return int(id) in list(self.ids)
     
     def get_file_from_id(self, id: int) -> str:
-        self._update_id_list(); return self.ids[id][0] if self.id_in_list(id) else 0
+        self._update_id_list(); return self.ids[id] if self.id_in_list(id) else 0
         
 class SInteractivePanel(ui.View):
     def __init__(self):
@@ -328,16 +330,23 @@ class SInteractivePanel(ui.View):
                 
         self.render_view(self.name)
             
-        
+    
+    def exit(self):
+        self.nas.logout()
+        self.close()
+          
     def connect(self):
         try:
             self.nas = filestation.FileStation(url, port, user, passw, secure=True, debug=debug)
             self.cache = CacheHandler()
             
         except AuthenticationError:
-            return console.alert('Invalid username / password'); exit(1)
+            console.alert('Invalid username / password')
+            self.exit()
+            
         except ConnectionError:
-            return console.alert('No Internet connection'); exit(1)
+            console.alert('No Internet connection')
+            self.exit()
     
     def animation_on_ld(self):
         for x in range(0, 10):
@@ -389,21 +398,19 @@ class SInteractivePanel(ui.View):
             
                 for ind, bnt in enumerate(buttons):
                     id_ = file_id_list[ind]
-                    
-                    if self.cache.id_in_list(id_):
-                        cache_check = ui.ImageView(image=assets['cache'], height=20, width=25, x=98, y=30, border_width = 1 if debug else 0)
-                        bnt.add_subview(cache_check)
-                        
-                        
+                    file_label_position_y = 150
+                    file_label_position_x = (30 if str(bnt.image.name).endswith('folder.png') else 40)
+                
                     file_lable = ui.Label(height=30)
                     self.bnts.append(ui.Button(height=25, width=25))
                     
                     bnt.add_subview(file_lable)
                     bnt.add_subview(self.bnts[ind])
+            
                     
                     file_lable.text = bnt.title
-                    file_lable.x = (10 if str(bnt.image.name).endswith('folder.png') else 40)
-                    file_lable.y = bnt.width-25   
+                    file_lable.x = file_label_position_x
+                    file_lable.y = file_label_position_y-4  
                     file_lable.width = 160-file_lable.x
                     
                     file_lable.font = font
@@ -412,6 +419,7 @@ class SInteractivePanel(ui.View):
                     file_lable.border_width = 1 if debug else 0
                     file_lable.line_break_mode = ui.LB_TRUNCATE_TAIL
                     
+                    cache_check = ui.ImageView(image=assets['cache' if self.cache.id_in_list(id_) else 'cache_nf'], height=20, width=25, x=file_label_position_x-25, y=file_label_position_y, border_width = 1 if debug else 0)  
                     
                     self.bnts[ind].x = 15
                     self.bnts[ind].y = 5
@@ -422,6 +430,7 @@ class SInteractivePanel(ui.View):
                     self.bnts[ind].name = bnt.title
                     self.bnts[ind].action = lambda _: self.context_menu(self.bnts[ind])
                     
+                    bnt.add_subview(cache_check)
                     self.scroll_view.add_subview(bnt)
                 
                 for o, a in enumerate(self.bnts):
@@ -649,6 +658,11 @@ class SInteractivePanel(ui.View):
         
     @ui.in_background
     def open_file(self, sender_data, file=None, id: int=None):
+        
+        def open_text(name):
+            with open(name, 'r') as r_file:
+                dialogs.text_dialog(title=name, text=r_file.read())
+                       
         try:
             os.mkdir('output')
         except FileExistsError:
@@ -665,8 +679,7 @@ class SInteractivePanel(ui.View):
             except:return
             
             if sender_data.title == 'False' or not folder_bool:
-                
-                
+                 
                 link = self.nas.get_download_url(true_path)
                 file_extension = str(true_name).split('.')[-1].lower() 
                 
@@ -680,14 +693,19 @@ class SInteractivePanel(ui.View):
                         if file_extension in photo_extensions+special_extensions:
                             console.quicklook(true_name)
                         else:
-                            with open(true_name, 'r') as r_file:
-                                dialogs.text_dialog(title=true_name, text=r_file.read())
-                       
-                        os.remove(true_name)
+                            open_text(true_name)
+                            
+                        shutil.move(true_name, f'./ImgView/{id}-{true_name}')
                         sender_data.enabled = True
                     else:
-                        image_ = self.cache.get_file_from_id(id)
-                        console.quicklook(f'./ImgView/{id}-{image_}')
+                        actual_file_ = self.cache.get_file_from_id(id)
+                        path = f'./ImgView/{id}-{actual_file_}'
+                        
+                        if file_extension in photo_extensions+special_extensions:
+                            console.quicklook(path)
+                        else:
+                            open_text(path)
+                                
                     
                 else:
                     console.alert('Cannot open this file.')
@@ -698,18 +716,13 @@ class SInteractivePanel(ui.View):
                 
                 self._files = get_files()
                 
-                c = get_files()
-                c = [item for item in c]
+                c = [item for item in get_files()]
                 
                 self._s_dir = sender_data.name
                 
-                if bool(c):    
-                    self.photoview = True
-                    
+                if bool(c):
                     self.img_view = ImgViewMain(self)
                     self.img_view.present(style, title_bar_color=title_bar_color, title_color=file_colour, hide_close_button=True)
-                    
-                    self.photoview = False
                         
                 else:
                     self.render_view(true_path)
