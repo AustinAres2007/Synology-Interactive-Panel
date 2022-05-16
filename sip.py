@@ -25,7 +25,7 @@ TODO:
     Add digital left / right buttons on PhotoView to navigate through images (Function, Done)
     Add copy and paste ability (Function, Done)
     Add a way to view a download status (Function, Done)
-    Add gestures, self note: make a delegate of scrollview to start (Function)
+    Add timestamps of when the file was created (Function)
     
     - Bugs / Issues
 
@@ -66,6 +66,7 @@ import requests
 import objc_util
 import photos
 import shutil
+import json
 
 from math import floor
 from nas.auth import AuthenticationError
@@ -73,6 +74,7 @@ from requests.exceptions import ConnectionError
 from threading import Thread
 from sys import argv, exit
 from time import sleep
+from pathlib import Path
 
 try:
     import config
@@ -227,6 +229,8 @@ def make_buttons(*args):
         
         yield item
 
+offline_contents = 'offline_structure.json'
+
 class CacheHandler:
     
     def __init__(self):
@@ -234,17 +238,93 @@ class CacheHandler:
         self.ids = {}
         
     def _update_id_list(self) -> None:
-        self.ids = {int(file.split('-')[0]): '-'.join(file.split('-')[1:]) for file in os.listdir('./ImgView') if str(file).split('.')[-1].lower() in photo_extensions+unicode_file+special_extensions}
-        
+        try:
+            self.ids = {int(file.split('-')[0]): '-'.join(file.split('-')[1:]) for file in os.listdir('./ImgView') if str(file).split('.')[-1].lower() in photo_extensions+unicode_file+special_extensions}
+        except FileNotFoundError:
+            os.mkdir('ImgView'); return self._update_id_list()
+            
     def get_all_ids(self) -> list:
         self._update_id_list(); return self.ids
     
     def id_in_list(self, id: int) -> bool:
-        self._update_id_list(); return int(id) in list(self.ids)
+        self._update_id_list(); return int(id) in list(self.ids) if int(id) else True
     
     def get_file_from_id(self, id: int) -> str:
         self._update_id_list(); return self.ids[id] if self.id_in_list(id) else 0
+
+class OfflineCacheConstructor:
+    
+    def __init__(self, cache_file):
+        self.cache_file = cache_file
+        self.files = None
         
+    def get_content(self, path: str='', dataset: dict=None, return_error=True, boolean=False, seperator: str='/', _old_name='root'):
+        dirs = path.split(seperator)
+        
+        if isinstance(dataset, dict) and dirs[0]:
+            if dirs[0] in dataset:
+                return self.get_content(seperator.join(dirs[1:]), dataset.get(dirs[0]), return_error, boolean, seperator, dirs[0]) if not boolean else True
+            else:
+                if return_error:
+                    raise FileNotFoundError(f'Could not find key: "{dirs[0]}" Within dictionary name: "{_old_name}"')
+                return False if boolean else {}
+                
+        return dataset
+        
+        
+    def _build_tree(self, tree_list):
+        return {tree_list[0]: self._build_tree(tree_list[1:])} if tree_list else []
+        
+    def build_dir(self, folders: list or str, dataset: dict):
+        folders = folders if isinstance(folders, list) else Path(folders).parts
+        
+        if folders:
+            
+            n = 1
+            where = ""
+            
+            for i, fd in enumerate(folders, start=n):
+                if fd not in self.get_content('/'.join(folders[:i-1]), dataset, return_error=False):
+                    n = i
+                    where = '/'.join(folders[:i-1])
+                    break
+                
+            data = self.get_content(where, dataset)
+            data[folders[n-1]] = self._build_tree(folders[n:])
+        
+            return dataset
+            
+        raise ValueError('folders list argument is empty.')
+        
+    def dump_at_location(self, file: str, location: str, table: dict):
+        dir = self.get_content(location, table)
+        dir.append(file)
+        
+        return table
+        
+    
+    def build_offline_structure(self):
+        
+        folders = []
+        main_data = []
+        self._final_dict = {}
+        
+        with open(self.cache_file, 'r') as demo_file:
+            data: dict = json.loads(demo_file.read())
+        
+            for d, f in data.values():
+                folders.append(d) if d not in folders else None
+                main_data.append((d, f))
+                
+        for folder in folders:
+            self._final_dict = self.build_dir(folder, self._final_dict)
+      
+        for folder, file in main_data:
+            self._final_dict = self.dump_at_location(file, folder, self._final_dict)
+    
+        self.files = self._final_dict
+        return True
+     
 class SInteractivePanel(ui.View):
     def __init__(self):
         try:
@@ -302,11 +382,13 @@ class SInteractivePanel(ui.View):
         command = console.input_alert('Debug Console')
             
         if command == 'clear':
+            
+            os.remove(offline_contents)
             shutil.rmtree('./ImgView')
             os.mkdir('ImgView')
             
             print('Cleared ImageView Cache')
-            
+                
     def make_media(self):
         file_or_folder = console.alert('New', '', 'File', 'Folder')
         name = console.input_alert('Media Name', '')
@@ -329,24 +411,38 @@ class SInteractivePanel(ui.View):
                 console.alert('Upload failed, cannot upload files with foreign letters, in the name of the file or the contents.')
                 
         self.render_view(self.name)
-            
-    
+        
     def exit(self):
-        self.nas.logout()
-        self.close()
-          
+        try:
+            self.close()
+            self.nas.logout() if not self.offline_mode else None
+        except AttributeError:
+            return
+            
     def connect(self):
         try:
-            self.nas = filestation.FileStation(url, port, user, passw, secure=True, debug=debug)
+            self.offline_mode = False
             self.cache = CacheHandler()
+            self.nas = filestation.FileStation(url, port, user, passw, secure=True, debug=debug)
             
         except AuthenticationError:
             console.alert('Invalid username / password')
             self.exit()
             
         except ConnectionError:
-            console.alert('No Internet connection')
-            self.exit()
+            choice = console.alert('No Internet connection, do you want to go into offline mode?', '', 'Yes', 'No')
+
+            if choice == 1:
+                self.offline_mode = True
+                self.offline_files = OfflineCacheConstructor("offline_structure.json")
+                self.offline_files.build_offline_structure()
+                   
+                print('Current Offline Cache >>> ',self.offline_files.files)   
+                console.alert('This feature is not ready, check console for bebug statements.')
+
+            else:
+                self.exit()
+            
     
     def animation_on_ld(self):
         for x in range(0, 10):
@@ -366,6 +462,9 @@ class SInteractivePanel(ui.View):
                 
     @ui.in_background
     def render_view(self, sender):
+        if self.offline_mode:
+            return
+            
         if not self.load_buffer and not self.photoview and (isinstance(sender, ui.Button) and (sender.title == 'Login' or sender.image.name.endswith('folder.png'))) or isinstance(sender, str) :
             try:
                 self.subviews[0].text = 'Loading'
@@ -376,20 +475,23 @@ class SInteractivePanel(ui.View):
                     ui.animate(self.animation_off, animation_length)  
                     ui.animate(self.animation_on_ld, animation_length-.1)
                     
-                    contents_d = self.nas.get_file_list(path, additional='time')
-                    contents = contents_d['data']['files']
-                    
-                    file_id_list = [id_stamp['additional']['time']['crtime'] for id_stamp in contents]
-                    
+                    if not self.offline_mode:
+                        contents_d = self.nas.get_file_list(path, additional='time') 
+                        contents = contents_d['data']['files']
+            
+                    else:
+                        contents = [{'isdir': False, 'name': None}]
                 except AttributeError:
-                    return console.alert('No connection to NAS, typo?'); exit(1)
+                    self.exit()
                 except KeyError:
                     if contents_d['error']['code'] == 119:
-                        console.hud_alert(f'Error, please reload script (Error code 119, cannot be fixed by author. Only Synology can fix this)'); exit(1)
+                        console.hud_alert(f'Error, please reload script (Error code 119, cannot be fixed by author. Only Synology can fix this)'); self.exit()
                     else:
-                        console.hud_alert(f"you are missing permissions to this directory.", 'error', 3.5); exit(1)
-                    
+                        console.hud_alert(f"you are missing permissions to this directory.", 'error', 3.5); self.exit()
+                
                 button_metadata = ([1 if debug else 0, file_colour, lambda _: self.render_view, h*1/8, item['name'], assets['folder'] if item['isdir'] else (assets['file'] if item['name'].split('.')[-1].lower() in unicode_file else (assets['photo'] if item['name'].split('.')[-1].lower() in photo_extensions else (assets['video'] if item['name'].split('.')[-1].lower() in video_extensions else (assets['audio'] if item['name'].split('.')[-1].lower() in audio_extensions else assets['file'])))), file_colour, item['path']] for item in contents)
+                
+                file_id_list = [id_stamp['additional']['time']['crtime'] for id_stamp in contents]
                 buttons = make_buttons(button_metadata, self.file_display_formula, self.scroll_view)
                 dir_status = {}
                 
@@ -721,6 +823,7 @@ class SInteractivePanel(ui.View):
                 self._s_dir = sender_data.name
                 
                 if bool(c):
+                    
                     self.img_view = ImgViewMain(self)
                     self.img_view.present(style, title_bar_color=title_bar_color, title_color=file_colour, hide_close_button=True)
                         
@@ -738,48 +841,78 @@ class ImgViewMain(ui.View):
         tb.bg_color = background_color
         tb.separator_color = file_colour
         
-        self.add_subview(tb)        
+        
+    
+        self.add_subview(tb)   
+             
 
 class ImgViewDelegate(ui.ListDataSource):
-    def get_image(self, url, fn): # Downloads an Image
-        if not os.path.isdir('ImgView'):
-            os.mkdir('ImgView')
-            
-        try:
-            time = self.sip.nas.get_file_info(f'{self.sip.name}/{self.sip._s_dir}/{fn}', additional='time')['data']['files'][0]['additional']['time']['crtime']
-            self.cache_name[fn] = f'{time}-{fn}'
-            
-            with open(f'./ImgView/{time}-{fn}', 'wb') as file:
-                with io.BytesIO(requests.get(url).content) as b: # Download Image from URL
-                    file.write(b.getvalue())
-            
-            self.added_files.append(fn)
-            
-        except requests.exceptions.ChunkedEncodingError:
-            console.alert("Could not download file. Did you shut down your iPad\nwhile ImageView was open?")
-            self.sip.img_view.close()
         
     def __init__(self, sip: SInteractivePanel):
+                
         self.sip = sip
         self.files = [file for file in sip._files]
         self.added_files = []
         self.cache_name = {}
         
+        threads = []
         files_id_fetch = sip.nas.get_file_list(f'{sip.name}/{sip._s_dir}', additional='time')['data']['files']
         ids = {item_sctr['name']: item_sctr['additional']['time']['crtime'] for item_sctr in files_id_fetch}
+        
+        file_cache = open(offline_contents, 'r+' if os.path.isfile(offline_contents) else "w+", encoding='utf-8')
+        
+        try:
+            local_cache = json.loads(str(file_cache.read()))
+        except json.decoder.JSONDecodeError:
+            local_cache = {}
+        finally:
+            file_cache.truncate(0)
+            file_cache.write('{}')
+            file_cache.close()
+        
+        def get_image(url, fn): # Downloads an Image
+            if not os.path.isdir('ImgView'):
+                os.mkdir('ImgView')
+            
+            try:
+                time = self.sip.nas.get_file_info(f'{self.sip.name}/{self.sip._s_dir}/{fn}', additional='time')['data']['files'][0]['additional']['time']['crtime']
+                self.cache_name[fn] = f'{time}-{fn}'
+                
+                with open(f'./ImgView/{time}-{fn}', 'wb') as file:
+                    with io.BytesIO(requests.get(url).content) as b: # Download Image from URL
+                        file.write(b.getvalue())
+                
+                self.added_files.append(fn)
+                f = f'{self.sip.name}/{self.sip._s_dir}'
+                local_cache[str(time)] = [f[1:], f'{time}-{fn}']
+                
+            except requests.exceptions.ChunkedEncodingError:
+                console.alert("Could not download file. Did you shut down your iPad\nwhile ImageView was open?")
+                self.sip.img_view.close() 
+            finally:
+                threads.remove(time)
         
         for fn in self.files: # Iterate for every file in the directory (that is an image)
             try:
                 if not os.path.isfile(f'./ImgView/{ids[fn]}-{fn}'):
-                    Thread(target=self.get_image, args=(sip.nas.get_download_url(f'{sip.name}/{sip._s_dir}/{fn}'), fn,)).start() # Download the Image
-                
+                    Thread(target=get_image, args=(sip.nas.get_download_url(f'{sip.name}/{sip._s_dir}/{fn}'), fn,)).start()
+                    threads.append(ids[fn])
+            
                 else:
                     self.cache_name[fn] = f'{ids[fn]}-{fn}'
                     self.added_files.append(fn)
-                    
+                
             except IndexError: # Dunno why this exception in here, thoughts it may break
                 break
         
+        def _check_threads():
+            while threads:
+                sleep(1)
+            else: 
+                with open(offline_contents, 'w') as write_cache:
+                    json.dump(local_cache, write_cache, indent=5)
+                    
+        Thread(target=_check_threads).start()
         ui.ListDataSource.__init__(self, self.files)
 
     def tableview_number_of_rows(self, tableview, section):
