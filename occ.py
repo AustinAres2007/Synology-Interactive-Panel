@@ -79,9 +79,6 @@ class OfflineCacheConstructor:
         dir.append(file)
         
         return table
-
-            
-        
     
     def build_offline_structure(self):
         
@@ -89,13 +86,20 @@ class OfflineCacheConstructor:
         main_data = []
         self._final_dict = {}
         
-        with open(self.cache_file, 'r') as demo_file:
-            data: dict = _json.loads(demo_file.read())
-            self.data = data
-            
-            for d, f in data.values():
-                folders.append(d) if d not in folders else None
-                main_data.append((d, f))
+        try:
+            with open(self.cache_file, 'r') as demo_file:
+                
+                    data: dict = _json.loads(demo_file.read())
+                    self.data = data
+                    
+                    for d, f in data.values():
+                        folders.append(d) if d not in folders else None
+                        main_data.append((d, f))
+        except _json.decoder.JSONDecodeError as e:
+            console.alert(f"Cache file corrupted. (occ.json within where this program is stored)\nI recommend deleting occ.json and delete the ImgView folder. Error > {e}")
+        except FileNotFoundError:
+            with open(self.cache_file, 'w+') as cr_cache_file:
+                _json.dump({}, cr_cache_file, indent=5)
                 
         for folder in folders:
             self._final_dict = self.build_dir(folder, self._final_dict)
@@ -106,11 +110,29 @@ class OfflineCacheConstructor:
     
         self.files = self._final_dict
         return True
+        
+    def change_cache_index(self, mode: str=None, ids: list=[], *args):
+        cache_file = open(self.cache_file, 'r+')
+        cache_contents: dict = _json.loads(cache_file.read())
+        cache_file.truncate(0)
+        cache_file.close()
+        
+        if mode == 'rm':
+            for id in ids:
+                del cache_contents[str(id)]
+        
+        elif mode == 'ap':
+            for ind, id in enumerate(ids):
+                cache_contents[str(id)] = [args[0][ind][0], args[0][ind][1]]
+                
+        new_cache_file = open(self.cache_file, 'w')    
+        _json.dump(cache_contents, new_cache_file, indent=5)
+        new_cache_file.close()
 
 if __name__ == '__main__':
     print("Commensing run test.")
     
-    test_obj = OfflineCacheConstructor("offline_structure.json")
+    test_obj = OfflineCacheConstructor("occ.json")
     test_obj.build_offline_structure()
     
     _path = input('Please input a path to commence final test upon: ')
