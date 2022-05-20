@@ -39,5 +39,6 @@ Can view files, folders, and images.
   * synology-api (Already bundled with the ZiP download of SiP, but is a fork. Do not use original package. Credit: [N4S4](https://github.com/N4S4/))
   * crtifi (You may run into an error with SSL, this may not be crucial for SiP to run, but to fix this, install StaSh, and do this command: ```pip install certifi``` or ```pip install --upgrade certifi```)
 ## Credits
-  Made by Austin Ares (Beo#6572 on Discord, or 400089431933059072 on [Discord.id](https://discord.id))
+  Made by Austin Ares (Austin Ares#2263 on Discord, or 400089431933059072 on [Discord.id](https://discord.id))
   "nas" module made by [N4S4 On GitHub](https://github.com/N4S4/), but edited by me to fit my needs, go check them out.
+  on a small note, any release of this project can be considered unstable, I will say it is stable when I think so.
