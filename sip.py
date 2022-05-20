@@ -26,6 +26,7 @@ TODO:
     Add copy and paste ability (Function, Done)
     Add a way to view a download status (Function, Done)
     Add timestamps of when the file was created (Function)
+    Add a way to listen to audio within SiP (Function)
     
     - Bugs / Issues
 
@@ -39,7 +40,9 @@ TODO:
     on iPhone, scrolling does not work properly when near the end of a directory (Bug, Fixed)
     When opening / making files with a foreign character (Example: A Chinese or Japanese character) the file cannot open (Bug, Temp Fix)
     The name of a file is not centered properly, this is because the asset for files are smaller than folders (Bug, Fixed)
-
+    When downloading photos to be viewed within ImgView, if the user shuts down pythonista, the files that were being downloaded will be empty, and will still be within ImgView cache (I.E: Corrupted/Empty). And the images that were downloaded would not be updated in the occ.json index. (Major Bug)
+    When uploading files en masse, the file IDs can be very similar or identical, it is fine if they are similar, but if they are identical, this will override the last file with the same ID, this is obviouly catastropic as you could be missing 10s or 100s of files from the cache. (Major Bug)
+    
     - Concepts
     
     * In Cache *
@@ -69,22 +72,22 @@ import shutil
 import json
 
 from math import floor
-from nas.auth import AuthenticationError
 from requests.exceptions import ConnectionError
 from threading import Thread
 from sys import argv, exit
 from time import sleep
-from pathlib import Path
 
 try:
     import config
+    import occ
     
     from hurry.filesize import size as s
     from hurry.filesize import verbose
     from nas import filestation
+    from nas.auth import AuthenticationError
     
 except ModuleNotFoundError as e:
-    print(f'"config", "nas" or "hurry" module not found.\n\nActual Error: {e}'); exit(1)
+    print(f'"config", "nas", "hurry" or "occ" module not found.\n\nActual Error: {e}'); exit(1)
 
 cfg = config.Config('sip-config.cfg')
 w, h = ui.get_screen_size()
@@ -229,101 +232,29 @@ def make_buttons(*args):
         
         yield item
 
-offline_contents = 'offline_structure.json'
+offline_contents = 'occ.json'
+cache_folder = 'ImgView'
 
 class CacheHandler:
     
     def __init__(self):
-        os.mkdir('ImgView') if not os.path.isdir('./ImgView') else None
+        os.mkdir(cache_folder) if not os.path.isdir(f'./{cache_folder}') else None
         self.ids = {}
         
     def _update_id_list(self) -> None:
         try:
-            self.ids = {int(file.split('-')[0]): '-'.join(file.split('-')[1:]) for file in os.listdir('./ImgView') if str(file).split('.')[-1].lower() in photo_extensions+unicode_file+special_extensions}
+            self.ids = {int(file.split('-')[0]): '-'.join(file.split('-')[1:]) for file in os.listdir(f'./{cache_folder}') if str(file).split('.')[-1].lower() in photo_extensions+unicode_file+special_extensions}
         except FileNotFoundError:
-            os.mkdir('ImgView'); return self._update_id_list()
+            os.mkdir(cache_folder); return self._update_id_list()
             
     def get_all_ids(self) -> list:
         self._update_id_list(); return self.ids
     
     def id_in_list(self, id: int) -> bool:
-        self._update_id_list(); return int(id) in list(self.ids) if int(id) else True
-    
-    def get_file_from_id(self, id: int) -> str:
-        self._update_id_list(); return self.ids[id] if self.id_in_list(id) else 0
+        self._update_id_list(); return int(id) in list(self.ids) or int(id) == 1 if int(id) else True
 
-class OfflineCacheConstructor:
-    
-    def __init__(self, cache_file):
-        self.cache_file = cache_file
-        self.files = None
-        
-    def get_content(self, path: str='', dataset: dict=None, return_error=True, boolean=False, seperator: str='/', _old_name='root'):
-        dirs = path.split(seperator)
-        
-        if isinstance(dataset, dict) and dirs[0]:
-            if dirs[0] in dataset:
-                return self.get_content(seperator.join(dirs[1:]), dataset.get(dirs[0]), return_error, boolean, seperator, dirs[0]) if not boolean else True
-            else:
-                if return_error:
-                    raise FileNotFoundError(f'Could not find key: "{dirs[0]}" Within dictionary name: "{_old_name}"')
-                return False if boolean else {}
-                
-        return dataset
-        
-        
-    def _build_tree(self, tree_list):
-        return {tree_list[0]: self._build_tree(tree_list[1:])} if tree_list else []
-        
-    def build_dir(self, folders: list or str, dataset: dict):
-        folders = folders if isinstance(folders, list) else Path(folders).parts
-        
-        if folders:
-            
-            n = 1
-            where = ""
-            
-            for i, fd in enumerate(folders, start=n):
-                if fd not in self.get_content('/'.join(folders[:i-1]), dataset, return_error=False):
-                    n = i
-                    where = '/'.join(folders[:i-1])
-                    break
-                
-            data = self.get_content(where, dataset)
-            data[folders[n-1]] = self._build_tree(folders[n:])
-        
-            return dataset
-            
-        raise ValueError('folders list argument is empty.')
-        
-    def dump_at_location(self, file: str, location: str, table: dict):
-        dir = self.get_content(location, table)
-        dir.append(file)
-        
-        return table
-        
-    
-    def build_offline_structure(self):
-        
-        folders = []
-        main_data = []
-        self._final_dict = {}
-        
-        with open(self.cache_file, 'r') as demo_file:
-            data: dict = json.loads(demo_file.read())
-        
-            for d, f in data.values():
-                folders.append(d) if d not in folders else None
-                main_data.append((d, f))
-                
-        for folder in folders:
-            self._final_dict = self.build_dir(folder, self._final_dict)
-      
-        for folder, file in main_data:
-            self._final_dict = self.dump_at_location(file, folder, self._final_dict)
-    
-        self.files = self._final_dict
-        return True
+    def get_file_from_id(self, id: int) -> str:
+        self._update_id_list(); return self.ids[int(id)] if self.id_in_list(int(id)) else 0
      
 class SInteractivePanel(ui.View):
     def __init__(self):
@@ -365,7 +296,6 @@ class SInteractivePanel(ui.View):
             
             self.subviews[0].alpha = 0.0
             self.add_subview(self.scroll_view) # Display the files in the root
-            self.render_view(root)
             
         except ConnectionError: # If no connection
             console.alert('No Connection')
@@ -384,12 +314,15 @@ class SInteractivePanel(ui.View):
         if command == 'clear':
             
             os.remove(offline_contents)
-            shutil.rmtree('./ImgView')
-            os.mkdir('ImgView')
+            shutil.rmtree(f'./{cache_folder}')
+            os.mkdir(cache_folder)
             
             print('Cleared ImageView Cache')
                 
     def make_media(self):
+        if self.offline_mode:
+            return console.alert("Cannot make media while in offline mode.")
+            
         file_or_folder = console.alert('New', '', 'File', 'Folder')
         name = console.input_alert('Media Name', '')
         
@@ -421,29 +354,36 @@ class SInteractivePanel(ui.View):
             
     def connect(self):
         try:
+
             self.offline_mode = False
             self.cache = CacheHandler()
+            self.offline_files = occ.OfflineCacheConstructor(offline_contents)
+            self.offline_files.build_offline_structure()
+            
             self.nas = filestation.FileStation(url, port, user, passw, secure=True, debug=debug)
             
+            self.render_view(root)
         except AuthenticationError:
             console.alert('Invalid username / password')
             self.exit()
             
         except ConnectionError:
-            choice = console.alert('No Internet connection, do you want to go into offline mode?', '', 'Yes', 'No')
-
-            if choice == 1:
-                self.offline_mode = True
-                self.offline_files = OfflineCacheConstructor("offline_structure.json")
-                self.offline_files.build_offline_structure()
-                   
-                print('Current Offline Cache >>> ',self.offline_files.files)   
-                console.alert('This feature is not ready, check console for bebug statements.')
-
-            else:
-                self.exit()
+            choice = console.alert('No Internet connection, do you want to go into offline mode?', '', 'Yes')
             
+            print(choice)
+            if choice == 1:
+                try:
+                    self.offline_mode = True
+                    
+                    if not self.offline_files.files:
+                        raise FileNotFoundError('No cache')
+                        
+                    self.render_view(root)
     
+                except FileNotFoundError:
+                    console.alert("Offline Cache is empty.")
+                    return self.exit()
+        
     def animation_on_ld(self):
         for x in range(0, 10):
             self.subviews[0].alpha = round(x/10)
@@ -462,14 +402,18 @@ class SInteractivePanel(ui.View):
                 
     @ui.in_background
     def render_view(self, sender):
-        if self.offline_mode:
-            return
             
         if not self.load_buffer and not self.photoview and (isinstance(sender, ui.Button) and (sender.title == 'Login' or sender.image.name.endswith('folder.png'))) or isinstance(sender, str) :
             try:
                 self.subviews[0].text = 'Loading'
                 self.load_buffer = True
+                button_metadata = False
+                
                 path = sender.name if isinstance(sender, ui.Button) else sender
+                
+                borders = 1 if debug else 0
+                ico = lambda nm, is_f: assets['folder'] if is_f else (assets['file'] if nm in unicode_file else (assets['photo'] if nm in photo_extensions else (assets['video'] if nm in video_extensions else (assets['audio'] if nm in audio_extensions else assets['file']))))
+                
                 
                 try:
                     ui.animate(self.animation_off, animation_length)  
@@ -480,7 +424,15 @@ class SInteractivePanel(ui.View):
                         contents = contents_d['data']['files']
             
                     else:
-                        contents = [{'isdir': False, 'name': None}]
+                        button_metadata = []
+                        f_ids = []
+                        
+                        for item in self.offline_files.get_content(path[1:], self.offline_files.files):
+                            if item:
+                                c_data = (False, item) if type(item) == str else (True, list(item)[0])
+                                button_metadata.append([borders, file_colour, lambda _: self.render_view, h*1/8, c_data[1], ico(c_data[1].split('.')[-1], c_data[0]), file_colour, f'{path}/{c_data[1]}', c_data[0]])
+                                f_ids.append(1 if c_data[0] else int(str(c_data[1]).split('-')[0]))
+                        
                 except AttributeError:
                     self.exit()
                 except KeyError:
@@ -489,14 +441,16 @@ class SInteractivePanel(ui.View):
                     else:
                         console.hud_alert(f"you are missing permissions to this directory.", 'error', 3.5); self.exit()
                 
-                button_metadata = ([1 if debug else 0, file_colour, lambda _: self.render_view, h*1/8, item['name'], assets['folder'] if item['isdir'] else (assets['file'] if item['name'].split('.')[-1].lower() in unicode_file else (assets['photo'] if item['name'].split('.')[-1].lower() in photo_extensions else (assets['video'] if item['name'].split('.')[-1].lower() in video_extensions else (assets['audio'] if item['name'].split('.')[-1].lower() in audio_extensions else assets['file'])))), file_colour, item['path']] for item in contents)
                 
-                file_id_list = [id_stamp['additional']['time']['crtime'] for id_stamp in contents]
+                
+                button_metadata = ([borders, file_colour, lambda _: self.render_view, h*1/8, item['name'], ico(item['name'].split('.')[-1], item['isdir']), file_colour, item['path']] for item in contents) if not button_metadata else button_metadata
+                
+                file_id_list = f_ids if self.offline_mode else [id_stamp['additional']['time']['crtime'] for id_stamp in contents]
                 buttons = make_buttons(button_metadata, self.file_display_formula, self.scroll_view)
                 dir_status = {}
                 
-                for item in contents:
-                    dir_status[item['name']] = item['isdir']
+                for item in button_metadata if self.offline_mode else contents:
+                    dir_status[item[4] if self.offline_mode else item['name']] = item[8] if self.offline_mode else item['isdir']
             
                 for ind, bnt in enumerate(buttons):
                     id_ = file_id_list[ind]
@@ -521,7 +475,7 @@ class SInteractivePanel(ui.View):
                     file_lable.border_width = 1 if debug else 0
                     file_lable.line_break_mode = ui.LB_TRUNCATE_TAIL
                     
-                    cache_check = ui.ImageView(image=assets['cache' if self.cache.id_in_list(id_) else 'cache_nf'], height=20, width=25, x=file_label_position_x-25, y=file_label_position_y, border_width = 1 if debug else 0)  
+                    cache_check = ui.ImageView(image=assets['cache' if self.cache.id_in_list(id_) else 'cache_nf'], height=20, width=25, x=file_label_position_x-25, y=file_label_position_y, border_width=borders)  
                     
                     self.bnts[ind].x = 15
                     self.bnts[ind].y = 5
@@ -566,7 +520,8 @@ class SInteractivePanel(ui.View):
                 
         elif sender.image.name.split('.')[-1] in unicode_file+special_extensions+photo_extensions:
             sender.enabled = False
-            f_id = self.nas.get_file_info(f'{self.name}/{sender.title}', additional='time')['data']['files'][0]['additional']['time']['crtime']
+            f_id = self.nas.get_file_info(f'{self.name}/{sender.title}', additional='time')['data']['files'][0]['additional']['time']['crtime'] if not self.offline_mode else sender.title.split('-')[0]
+            
             self.open_file(sender, True, f_id)
             
     
@@ -632,7 +587,7 @@ class SInteractivePanel(ui.View):
     
     @ui.in_background
     def context_menu(self, sender):
-        if not self.photoview:
+        if not self.photoview and not self.offline_mode:
             items = ['Download', 'Delete', 'Rename', 'Open', 'Info', 'Copy', 'Download Status' if self.download else ''] if not sender.title == 'True' else ['Delete', 'Rename', 'Open', 'Info', 'Paste' if self.copied else '']
             option = dialogs.list_dialog(title=sender.name, items=items)
         
@@ -653,6 +608,9 @@ class SInteractivePanel(ui.View):
                 self.paste_item(sender)
             elif option == 'Download Status':
                 self.display_download_status(sender)
+        elif self.offline_mode:
+            console.alert('Cannot use item actions when in offline mode.')
+            
                 
                 
     @ui.in_background
@@ -721,7 +679,9 @@ class SInteractivePanel(ui.View):
             self.nas_console()
     
     def import_foreign_media(self):
-        
+        if self.offline_mode:
+            return console.alert('Cannot upload local file to NAS while in offline mode.')
+            
         path = self.name
         self.off = True
         self.text = 'Wait.'
@@ -762,43 +722,48 @@ class SInteractivePanel(ui.View):
     def open_file(self, sender_data, file=None, id: int=None):
         
         def open_text(name):
-            with open(name, 'r') as r_file:
-                dialogs.text_dialog(title=name, text=r_file.read())
-                       
+            try:
+                with open(name, 'r') as r_file:
+                    dialogs.text_dialog(title=name, text=r_file.read())
+            except FileNotFoundError:
+                # TODO: Test if this actually works.
+                
+                id = str(os.path.basename(name)).split('-')[0]
+                self.offline_files.remove_cache_index('rm', [id])
+                         
         try:
             os.mkdir('output')
         except FileExistsError:
             pass
         finally:
+                
+            true_path = f'{self.name}/{sender_data.name}' if not file else sender_data.name
+            true_name = sender_data.name if not file else sender_data.title
             
-            status = self.nas.get_file_info(sender_data.name) if file else False
-            f = True if file and not status['data']['files'][0]['isdir'] else False
-            true_name = sender_data.name if not f else sender_data.title
-            true_path = f'{self.name}/{sender_data.name}' if not f else sender_data.name
-            
-            try:
-                folder_bool = self.nas.get_file_info(true_path)['data']['files'][0]['isdir']
-            except:return
-            
-            if sender_data.title == 'False' or not folder_bool:
+            if sender_data.title == 'False' or file:
                  
-                link = self.nas.get_download_url(true_path)
-                file_extension = str(true_name).split('.')[-1].lower() 
+                file_extension = true_name.split('.')[-1].lower() 
                 
                 if file_extension in photo_extensions+unicode_file+special_extensions:
                     
                     if id and not self.cache.id_in_list(id):
-                        with open(true_name, 'wb') as file:
-                            with io.BytesIO(requests.get(link).content) as data:
-                                file.write(data.getvalue())
-                    
+                        if not self.offline_mode:
+                            link = self.nas.get_download_url(true_path) 
+                            
+                            with open(true_name, 'wb') as file:
+                                with io.BytesIO(requests.get(link).content) as data:
+                                    file.write(data.getvalue())
+                            
+                            self.offline_files.change_cache_index('ap', [id], [[str(self.name)[1:], f"{id}-{true_name}"]])
+                        else:
+                            true_name = f"./{cache_folder}/{true_name}"
+                            
                         if file_extension in photo_extensions+special_extensions:
                             console.quicklook(true_name)
                         else:
                             open_text(true_name)
                             
-                        shutil.move(true_name, f'./ImgView/{id}-{true_name}')
-                        sender_data.enabled = True
+                        shutil.move(true_name, f'./ImgView/{id}-{true_name}') if not self.offline_mode else None
                     else:
                         actual_file_ = self.cache.get_file_from_id(id)
                         path = f'./ImgView/{id}-{actual_file_}'
@@ -807,8 +772,7 @@ class SInteractivePanel(ui.View):
                             console.quicklook(path)
                         else:
                             open_text(path)
-                                
-                    
+                         
                 else:
                     console.alert('Cannot open this file.')
                     
@@ -819,14 +783,13 @@ class SInteractivePanel(ui.View):
                 self._files = get_files()
                 
                 c = [item for item in get_files()]
-                
                 self._s_dir = sender_data.name
                 
                 if bool(c):
                     
                     self.img_view = ImgViewMain(self)
                     self.img_view.present(style, title_bar_color=title_bar_color, title_color=file_colour, hide_close_button=True)
-                        
+                      
                 else:
                     self.render_view(true_path)
 
@@ -835,16 +798,14 @@ class ImgViewMain(ui.View):
     def __init__(self, s: SInteractivePanel):
         self.frame = (0, 0, 500, 500)
         self.name = s._s_dir
-        
+        self.s = s
         tb = ui.TableView(flex='wh', frame=self.frame)
         tb.data_source = tb.delegate = ImgViewDelegate(sip=s)
         tb.bg_color = background_color
         tb.separator_color = file_colour
         
-        
     
         self.add_subview(tb)   
-             
 
 class ImgViewDelegate(ui.ListDataSource):
         
