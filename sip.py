@@ -40,7 +40,7 @@ TODO:
     on iPhone, scrolling does not work properly when near the end of a directory (Bug, Fixed)
     When opening / making files with a foreign character (Example: A Chinese or Japanese character) the file cannot open (Bug, Temp Fix)
     The name of a file is not centered properly, this is because the asset for files are smaller than folders (Bug, Fixed)
-    When downloading photos to be viewed within ImgView, if the user shuts down pythonista, the files that were being downloaded will be empty, and will still be within ImgView cache (I.E: Corrupted/Empty). And the images that were downloaded would not be updated in the occ.json index. (Major Bug)
+    When downloading photos to be viewed within ImgView, if the user shuts down pythonista, the files that were being downloaded will be empty, and will still be within ImgView cache (I.E: Corrupted/Empty). And the images that were downloaded would not be updated in the occ.json index. (Major Bug, Fixed)
     When uploading files en masse, the file IDs can be very similar or identical, it is fine if they are similar, but if they are identical, this will override the last file with the same ID, this is obviouly catastropic as you could be missing 10s or 100s of files from the cache. (Major Bug, Fixed)
     
     - Concepts
@@ -255,6 +255,25 @@ class CacheHandler:
 
     def get_file_from_id(self, id: int) -> str:
         self._update_id_list(); return self.ids[int(id)] if self.id_in_list(int(id)) else 0
+    
+    def check_files(self, cache_file):
+        try:
+            file_ids = []
+            for file in os.listdir(f'./{cache_folder}'):
+                path = f'./{cache_folder}/{file}'
+                if os.stat(path).st_size == 0:
+                    os.remove(path)
+                    file_ids.append(str(file).split('-')[0])
+            
+            if file_ids:
+                cache_file.change_cache_index(mode='rm', ids=file_ids)
+                
+        except FileNotFoundError:
+            os.mkdir(cache_folder)
+    
+    def clear_cache(self):
+        shutil.rmtree(f'./{cache_folder}')
+        os.mkdir(cache_folder)
      
 class SInteractivePanel(ui.View):
     def __init__(self):
@@ -293,10 +312,9 @@ class SInteractivePanel(ui.View):
 
             self.add_subview(ui.Label(name='ld', text=self.text, x=self.center[0], y=self.center[1]/2, alignment=ui.ALIGN_LEFT, font=font,   text_color=file_colour))
             
-            
             self.subviews[0].alpha = 0.0
             self.add_subview(self.scroll_view) # Display the files in the root
-            
+        
         except ConnectionError: # If no connection
             console.alert('No Connection')
             self.close()
@@ -354,11 +372,12 @@ class SInteractivePanel(ui.View):
             
     def connect(self):
         try:
-
             self.offline_mode = False
+            
             self.cache = CacheHandler()
-            self.offline_files = occ.OfflineCacheConstructor(offline_contents)
+            self.offline_files = occ.OfflineCacheConstructor(offline_contents, self.cache)
             self.offline_files.build_offline_structure()
+            self.cache.check_files(self.offline_files)
             
             self.nas = filestation.FileStation(url, port, user, passw, secure=True, debug=debug)
             
@@ -909,8 +928,8 @@ class ImgViewDelegate(ui.ListDataSource):
         else:
             print('This image has not downloaded yet.')
     
-
-View = SInteractivePanel() # Make an instance of the main script
-
-View.connect() # Establish connection to NAS
-View.present(style, hide_close_button=True, title_bar_color=title_bar_color, title_color=file_colour) # Display initialised screen content
+if __name__ == '__main__':
+    View = SInteractivePanel() # Make an instance of the main script
+    
+    View.connect() # Establish connection to NAS
+    View.present(style, hide_close_button=True, title_bar_color=title_bar_color, title_color=file_colour) # Display initialised screen content
