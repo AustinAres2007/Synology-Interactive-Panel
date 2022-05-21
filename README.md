@@ -27,17 +27,16 @@ Can view files, folders, and images.
   
   1. root  >  Name of the root of the NAS, mine is /Volume, yours maybe different. 
 
-## External Dependencies (Not built into Pythonista)
+## Prerequisites
   
   You will need three extra modules that are not bundled with Pythonista, these are:
   
   * StaSh (```import requests as r; exec(r.get('https://bit.ly/get-stash').content``` this used for installing the next modules)
+  
   * hurry.filesize (```pip install hurry.filesize```)
-  
   * config (```pip install config```)
-  
-  * synology-api (Already bundled with the ZiP download of SiP, but is a fork. Do not use original package. Credit: [N4S4](https://github.com/N4S4/))
   * crtifi (You may run into an error with SSL, this may not be crucial for SiP to run, but to fix this, install StaSh, and do this command: ```pip install certifi``` or ```pip install --upgrade certifi```)
+  
 ## Credits
   Made by Austin Ares (Austin Ares#2263 on Discord, or 400089431933059072 on [Discord.id](https://discord.id))
   "nas" module made by [N4S4 On GitHub](https://github.com/N4S4/), but edited by me to fit my needs, go check them out.
