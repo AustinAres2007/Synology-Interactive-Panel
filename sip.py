@@ -362,6 +362,7 @@ class SInteractivePanel(ui.View):
             
             self.nas = filestation.FileStation(url, port, user, passw, secure=True, debug=debug)
             
+            print(self.nas.get_file_info('/Volume', additional=['size', 'time']))
             self.render_view(root)
         except AuthenticationError:
             console.alert('Invalid username / password')
@@ -420,7 +421,7 @@ class SInteractivePanel(ui.View):
                     ui.animate(self.animation_on_ld, animation_length-.1)
                     
                     if not self.offline_mode:
-                        contents_d = self.nas.get_file_list(path, additional='time') 
+                        contents_d = self.nas.get_file_list(path, additional=['size', 'time']) 
                         contents = contents_d['data']['files']
             
                     else:
@@ -441,11 +442,9 @@ class SInteractivePanel(ui.View):
                     else:
                         console.hud_alert(f"you are missing permissions to this directory.", 'error', 3.5); self.exit()
                 
-                
-                
                 button_metadata = ([borders, file_colour, lambda _: self.render_view, h*1/8, item['name'], ico(item['name'].split('.')[-1], item['isdir']), file_colour, item['path']] for item in contents) if not button_metadata else button_metadata
                 
-                file_id_list = f_ids if self.offline_mode else [id_stamp['additional']['time']['crtime'] for id_stamp in contents]
+                file_id_list = f_ids if self.offline_mode else [id_stamp['additional']['time']['crtime']+id_stamp['additional']['size'] for id_stamp in contents]
                 buttons = make_buttons(button_metadata, self.file_display_formula, self.scroll_view)
                 dir_status = {}
                 
@@ -519,8 +518,11 @@ class SInteractivePanel(ui.View):
                 ui.animate(self.animation_on, animation_length)
                 
         elif sender.image.name.split('.')[-1] in unicode_file+special_extensions+photo_extensions:
-            sender.enabled = False
-            f_id = self.nas.get_file_info(f'{self.name}/{sender.title}', additional='time')['data']['files'][0]['additional']['time']['crtime'] if not self.offline_mode else sender.title.split('-')[0]
+            if not self.offline_mode:
+                f_data = self.nas.get_file_info(f'{self.name}/{sender.title}', additional=['time', 'size'])['data']['files'][0]['additional']
+                f_id = int(f_data['time']['crtime']+f_data['size']) 
+            else:
+                f_id = sender.title.split('-')[0]
             
             self.open_file(sender, True, f_id)
             
@@ -763,10 +765,10 @@ class SInteractivePanel(ui.View):
                         else:
                             open_text(true_name)
                             
-                        shutil.move(true_name, f'./ImgView/{id}-{true_name}') if not self.offline_mode else None
+                        shutil.move(true_name, f'./{cache_folder}/{id}-{true_name}') if not self.offline_mode else None
                     else:
                         actual_file_ = self.cache.get_file_from_id(id)
-                        path = f'./ImgView/{id}-{actual_file_}'
+                        path = f'./{cache_folder}/{id}-{actual_file_}'
                         
                         if file_extension in photo_extensions+special_extensions:
                             console.quicklook(path)
@@ -817,8 +819,10 @@ class ImgViewDelegate(ui.ListDataSource):
         self.cache_name = {}
         
         threads = []
-        files_id_fetch = sip.nas.get_file_list(f'{sip.name}/{sip._s_dir}', additional='time')['data']['files']
-        ids = {item_sctr['name']: item_sctr['additional']['time']['crtime'] for item_sctr in files_id_fetch}
+        files_id_fetch = sip.nas.get_file_list(f'{sip.name}/{sip._s_dir}', additional=['time', 'size'])['data']['files']
+        
+        ids = {item_sctr['name']: int(item_sctr['additional']['time']['crtime']+item_sctr['additional']['size']) for item_sctr in files_id_fetch}
+        print(ids)
         
         file_cache = open(offline_contents, 'r+' if os.path.isfile(offline_contents) else "w+", encoding='utf-8')
         
@@ -832,30 +836,35 @@ class ImgViewDelegate(ui.ListDataSource):
             file_cache.close()
         
         def get_image(url, fn): # Downloads an Image
-            if not os.path.isdir('ImgView'):
-                os.mkdir('ImgView')
+            if not os.path.isdir(cache_folder):
+                os.mkdir(cache_folder)
             
             try:
-                time = self.sip.nas.get_file_info(f'{self.sip.name}/{self.sip._s_dir}/{fn}', additional='time')['data']['files'][0]['additional']['time']['crtime']
-                self.cache_name[fn] = f'{time}-{fn}'
+                main_data = self.sip.nas.get_file_info(f'{self.sip.name}/{self.sip._s_dir}/{fn}', additional=['time', 'size'])['data']['files'][0]['additional']
+                unix_stamp = main_data['time']['crtime']
+                file_size = main_data['size']
                 
-                with open(f'./ImgView/{time}-{fn}', 'wb') as file:
+                file_id = unix_stamp+file_size
+                
+                self.cache_name[fn] = f'{file_id}-{fn}'
+                
+                with open(f'./{cache_folder}/{file_id}-{fn}', 'wb') as file:
                     with io.BytesIO(requests.get(url).content) as b: # Download Image from URL
                         file.write(b.getvalue())
                 
                 self.added_files.append(fn)
                 f = f'{self.sip.name}/{self.sip._s_dir}'
-                local_cache[str(time)] = [f[1:], f'{time}-{fn}']
+                local_cache[str(file_id)] = [f[1:], f'{file_id}-{fn}']
                 
             except requests.exceptions.ChunkedEncodingError:
                 console.alert("Could not download file. Did you shut down your iPad\nwhile ImageView was open?")
                 self.sip.img_view.close() 
             finally:
-                threads.remove(time)
+                threads.remove(file_id)
         
         for fn in self.files: # Iterate for every file in the directory (that is an image)
             try:
-                if not os.path.isfile(f'./ImgView/{ids[fn]}-{fn}'):
+                if not os.path.isfile(f'./{cache_folder}/{ids[fn]}-{fn}'):
                     Thread(target=get_image, args=(sip.nas.get_download_url(f'{sip.name}/{sip._s_dir}/{fn}'), fn,)).start()
                     threads.append(ids[fn])
             
@@ -898,7 +907,7 @@ class ImgViewDelegate(ui.ListDataSource):
     def tableview_did_select(self, tableview, section, row):
         
         if self.added_files and len(self.added_files)-1 >= row:
-            folder_contents = [f'./ImgView/{self.cache_name[file]}' for file in self.added_files]
+            folder_contents = [f'./{cache_folder}/{self.cache_name[file]}' for file in self.added_files]
             console.quicklook(folder_contents)
         else:
             print('This image has not downloaded yet.')
