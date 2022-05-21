@@ -362,7 +362,6 @@ class SInteractivePanel(ui.View):
             
             self.nas = filestation.FileStation(url, port, user, passw, secure=True, debug=debug)
             
-            print(self.nas.get_file_info('/Volume', additional=['size', 'time']))
             self.render_view(root)
         except AuthenticationError:
             console.alert('Invalid username / password')
@@ -371,7 +370,6 @@ class SInteractivePanel(ui.View):
         except ConnectionError:
             choice = console.alert('No Internet connection, do you want to go into offline mode?', '', 'Yes')
             
-            print(choice)
             if choice == 1:
                 try:
                     self.offline_mode = True
@@ -822,7 +820,6 @@ class ImgViewDelegate(ui.ListDataSource):
         files_id_fetch = sip.nas.get_file_list(f'{sip.name}/{sip._s_dir}', additional=['time', 'size'])['data']['files']
         
         ids = {item_sctr['name']: int(item_sctr['additional']['time']['crtime']+item_sctr['additional']['size']) for item_sctr in files_id_fetch}
-        print(ids)
         
         file_cache = open(offline_contents, 'r+' if os.path.isfile(offline_contents) else "w+", encoding='utf-8')
         
