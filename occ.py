@@ -1,4 +1,7 @@
 from pathlib import Path as _Path
+from sip import CacheHandler
+from typing import Union
+
 import json as _json
 import console
 
@@ -8,11 +11,12 @@ OfflineCacheConstructor file, used for when offline mode is used within SiP.
 
 class OfflineCacheConstructor:
     
-    def __init__(self, cache_file):
+    def __init__(self, cache_file: str, cache_handler: CacheHandler):
         self.cache_file = cache_file
         self.files = None
+        self._c_handler = cache_handler
         
-    def get_content(self, path: str='', dataset: dict=None, return_error=True, boolean=False, seperator: str='/', _old_name='root', _identifier=None):
+    def get_content(self, path: str='', dataset: dict=None, return_error=True, boolean=False, seperator: str='/', _old_name='root', _identifier=None) -> Union[bool, dict, None]:
         
         dirs = path.split(seperator)
         x = None
@@ -86,6 +90,10 @@ class OfflineCacheConstructor:
         main_data = []
         self._final_dict = {}
         
+        def new_cache():
+            with open(self.cache_file, 'w+') as cr_cache_file:
+                _json.dump({}, cr_cache_file, indent=5)
+                
         try:
             with open(self.cache_file, 'r') as demo_file:
                 
@@ -96,11 +104,13 @@ class OfflineCacheConstructor:
                         folders.append(d) if d not in folders else None
                         main_data.append((d, f))
         except _json.decoder.JSONDecodeError as e:
-            console.alert(f"Cache file corrupted. (occ.json within where this program is stored)\nI recommend deleting occ.json and delete the ImgView folder. Error > {e}")
+            print(f"Cache file corrupted. (occ.json within where this program is stored)")
+            new_cache()
+            self._c_handler.clear_cache()
+            
         except FileNotFoundError:
-            with open(self.cache_file, 'w+') as cr_cache_file:
-                _json.dump({}, cr_cache_file, indent=5)
-                
+            new_cache()
+            
         for folder in folders:
             self._final_dict = self.build_dir(folder, self._final_dict)
         
@@ -119,8 +129,11 @@ class OfflineCacheConstructor:
         
         if mode == 'rm':
             for id in ids:
-                del cache_contents[str(id)]
-        
+                try:
+                    del cache_contents[str(id)]
+                except KeyError:
+                    continue
+                    
         elif mode == 'ap':
             for ind, id in enumerate(ids):
                 cache_contents[str(id)] = [args[0][ind][0], args[0][ind][1]]
