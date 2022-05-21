@@ -81,7 +81,7 @@ class FileStation:
 
     def get_file_list(self, folder_path=None, offset=None, limit=None, sort_by=None,
                       sort_direction=None, pattern=None, filetype=None, goto_path=None, additional=None):
-
+                          
         api_name = 'SYNO.FileStation.List'
         info = self.file_station_list[api_name]
         api_path = info['path']
@@ -100,14 +100,13 @@ class FileStation:
 
         if additional is None:
             additional = ['real_path', 'size', 'owner', 'time']
-
-        if type(additional) == list:
-            additional = ','.join(additional)
-
-        req_param['additional'] = additional
+        
+        additional = str(additional).replace("'", '"')
+    
+        req_param['additional'] = additional    
 
         return self.request_data(api_name, api_path, req_param)
-
+        
     def get_file_info(self, path=None, additional=None):
         api_name = 'SYNO.FileStation.List'
         info = self.file_station_list[api_name]
@@ -122,13 +121,12 @@ class FileStation:
             req_param['path'] = path
         elif path is not None:
             req_param['path'] = path
+        
 
         if additional is None:
             additional = ['real_path', 'size', 'owner', 'time']
 
-        if type(additional) is list:
-            additional = ','.join(additional)
-
+        additional = str(additional).replace("'", '"')
         req_param['additional'] = additional
 
         return self.request_data(api_name, api_path, req_param)
@@ -678,6 +676,7 @@ class FileStation:
 
     def start_copy_move(self, path=None, dest_folder_path=None, overwrite=None, remove_src=None,
                         accurate_progress=None, search_taskid=None):
+                            
         api_name = 'SYNO.FileStation.CopyMove'
         info = self.file_station_list[api_name]
         api_path = info['path']
@@ -1023,7 +1022,7 @@ class FileStation:
                             filename = filename[:file_ext]+f'_{x}'+filename[file_ext:]; break
 
         with open(fullpath+filename, 'wb') as f:
-            for chunk in r.iter_content(chunk_size=500000):
+            for chunk in r.iter_content(chunk_size=4194304):
                 if chunk:
                     f.write(chunk)
                     
