@@ -82,7 +82,7 @@ try:
     import occ
     
     from hurry.filesize import size as s
-    from hurry.filesize import verbose
+    from hurry.filesize import verbose, alternative
     from nas import filestation
     from nas.auth import AuthenticationError
     
@@ -296,7 +296,7 @@ class SInteractivePanel(ui.View):
             self.item = self.nas = self.last_folder = None
             self.off = self.photoview = self.load_buffer = self.is_pointing = self.download = False
             
-            self.file_display_formula = (frame_val*1/offset, spacing, frame_val/(scale*2), frame_val/(scale*2), self.fpr)
+            self.file_display_formula = (frame_val*1/offset, spacing, frame_val/(scale*2), frame_val/(scale*2)+35, self.fpr)
             
             # Define the scrollable area, only done on initialisation, when going through folders, it's done in render_view
             
@@ -321,7 +321,7 @@ class SInteractivePanel(ui.View):
         
     def layout(self):
         self.fpr = floor((self.width-spacing)/(frame_val/(scale*2)))
-        self.file_display_formula = (frame_val*1/offset, spacing, frame_val/(scale*2), frame_val/(scale*2), self.fpr)
+        self.file_display_formula = (frame_val*1/offset, spacing, frame_val/(scale*2), frame_val/(scale*2)+35, self.fpr)
         
         self.render_view(self.name)
     
@@ -455,7 +455,7 @@ class SInteractivePanel(ui.View):
                     self.exit()
                 except KeyError:
                     if contents_d['error']['code'] == 119:
-                        console.hud_alert(f'Error, please reload script (Error code 119, cannot be fixed by author. Only Synology can fix this)'); self.exit()
+                        console.hud_alert(f'Error, please reload script (Error code 119, cannot be fixed by author. Only Synology can fix this)')
                     else:
                         console.hud_alert(f"you are missing permissions to this directory.", 'error', 3.5); self.exit()
                 
@@ -467,34 +467,40 @@ class SInteractivePanel(ui.View):
                 
                 for item in button_metadata if self.offline_mode else contents:
                     dir_status[item[4] if self.offline_mode else item['name']] = item[8] if self.offline_mode else item['isdir']
-            
+
                 for ind, bnt in enumerate(buttons):
+                    folder = str(bnt.image.name).endswith('folder.png')
                     id_ = file_id_list[ind]
-                    file_label_position_y = 150
-                    file_label_position_x = (30 if str(bnt.image.name).endswith('folder.png') else 40)
+                    borders = 1 if debug else 0
+                    
+                    file_label_position_y = 160+4
+                    file_label_position_x = (25 if folder else 35)
                 
-                    file_lable = ui.Label(height=30)
+                    file_lable = ui.Label(height=20, flex=flex, text=bnt.title, text_color=file_colour, border_width=borders, font=font)
+                    
                     self.bnts.append(ui.Button(height=25, width=25))
                     
                     bnt.add_subview(file_lable)
                     bnt.add_subview(self.bnts[ind])
             
-                    
-                    file_lable.text = bnt.title
                     file_lable.x = file_label_position_x
-                    file_lable.y = file_label_position_y-4  
+                    file_lable.y = file_label_position_y+10
                     file_lable.width = 160-file_lable.x
                     
-                    file_lable.font = font
-                    file_lable.text_color = file_colour
-                    file_lable.flex = flex
-                    file_lable.border_width = 1 if debug else 0
-                    file_lable.line_break_mode = ui.LB_TRUNCATE_TAIL
+                    cache_check = ui.ImageView(image=assets['cache' if self.cache.id_in_list(id_) else 'cache_nf'], height=20, width=25, x=file_label_position_x-25, y=file_label_position_y+10, border_width=borders)  
                     
-                    cache_check = ui.ImageView(image=assets['cache' if self.cache.id_in_list(id_) else 'cache_nf'], height=20, width=25, x=file_label_position_x-25, y=file_label_position_y, border_width=borders)  
-                    
+                    if not folder and not self.offline_mode: 
+                        size_lable = ui.Label(height=20, flex=flex, text=s(contents[ind]['additional']['size'], system=alternative), text_color=file_colour, border_width=borders, font=font)
+                        
+                        size_lable.x = file_label_position_x
+                        size_lable.y = file_label_position_y+20
+                        size_lable.width = 160-file_lable.x
+                        file_lable.y = file_label_position_y
+                        
+                        bnt.add_subview(size_lable)
+
                     self.bnts[ind].x = 15
-                    self.bnts[ind].y = 5
+                    self.bnts[ind].y = 15
                     self.bnts[ind].flex = flex
                     self.bnts[ind].border_width = 1 if debug else 0
                     self.bnts[ind].image = assets['opt']
