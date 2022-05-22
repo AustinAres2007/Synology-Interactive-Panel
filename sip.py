@@ -22,11 +22,11 @@ TODO:
     Open file by default when tapping on it (Change, Done)
     When going into more options on a folder and tapping "Open" just open the folder, don't return an error (Change, Done)
     When opening an empty directory, there is no indication that the folder is empty, and could be mistaken that SiP has crashed (Change, Done)
-    Add digital left / right buttons on PhotoView to navigate through images (Function, Done)
+    Add digital left / right buttons on PhotoView to navigate through images (Function, Removed)
     Add copy and paste ability (Function, Done)
     Add a way to view a download status (Function, Done)
     Add timestamps of when the file was created (Function)
-    Add a way to listen to audio within SiP (Function)
+    Add a way to listen to audio & video within SiP (Function, Done)
     
     - Bugs / Issues
 
@@ -42,6 +42,8 @@ TODO:
     The name of a file is not centered properly, this is because the asset for files are smaller than folders (Bug, Fixed)
     When downloading photos to be viewed within ImgView, if the user shuts down pythonista, the files that were being downloaded will be empty, and will still be within ImgView cache (I.E: Corrupted/Empty). And the images that were downloaded would not be updated in the occ.json index. (Major Bug, Fixed)
     When uploading files en masse, the file IDs can be very similar or identical, it is fine if they are similar, but if they are identical, this will override the last file with the same ID, this is obviouly catastropic as you could be missing 10s or 100s of files from the cache. (Major Bug, Fixed)
+    When loading a big files (I'd say over 50 MBs) It loads the file, but there is no indicator, and SiP does not respond. Find a way to fix this. (Issue, Fixed)
+    When using ImageView with a lot of files, there can be connection issues and long load times (Issue)
     
     - Concepts
     
@@ -177,7 +179,7 @@ else:
     pass
 
 frame_val = 1020
-        
+extra = 35     
 
 picker = 'black'
 assets = {}
@@ -243,7 +245,7 @@ class CacheHandler:
         
     def _update_id_list(self) -> None:
         try:
-            self.ids = {int(file.split('-')[0]): '-'.join(file.split('-')[1:]) for file in os.listdir(f'./{cache_folder}') if str(file).split('.')[-1].lower() in photo_extensions+unicode_file+special_extensions}
+            self.ids = {int(file.split('-')[0]): '-'.join(file.split('-')[1:]) for file in os.listdir(f'./{cache_folder}') if str(file).split('.')[-1].lower() in photo_extensions+unicode_file+special_extensions+audio_extensions+video_extensions}
         except FileNotFoundError:
             os.mkdir(cache_folder); return self._update_id_list()
             
@@ -448,7 +450,7 @@ class SInteractivePanel(ui.View):
                         for item in self.offline_files.get_content(path[1:], self.offline_files.files):
                             if item:
                                 c_data = (False, item) if type(item) == str else (True, list(item)[0])
-                                button_metadata.append([borders, file_colour, lambda _: self.render_view, h*1/8, c_data[1], ico(c_data[1].split('.')[-1], c_data[0]), file_colour, f'{path}/{c_data[1]}', c_data[0]])
+                                button_metadata.append([borders, file_colour, lambda _: self.render_view, h*1/8, c_data[1], ico(c_data[1].split('.')[-1].lower(), c_data[0]), file_colour, f'{path}/{c_data[1]}', c_data[0]])
                                 f_ids.append(1 if c_data[0] else int(str(c_data[1]).split('-')[0]))
                         
                 except AttributeError:
@@ -459,7 +461,7 @@ class SInteractivePanel(ui.View):
                     else:
                         console.hud_alert(f"you are missing permissions to this directory.", 'error', 3.5); self.exit()
                 
-                button_metadata = ([borders, file_colour, lambda _: self.render_view, h*1/8, item['name'], ico(item['name'].split('.')[-1], item['isdir']), file_colour, item['path']] for item in contents) if not button_metadata else button_metadata
+                button_metadata = ([borders, file_colour, lambda _: self.render_view, h*1/8, item['name'], ico(item['name'].split('.')[-1].lower(), item['isdir']), file_colour, item['path']] for item in contents) if not button_metadata else button_metadata
                 
                 file_id_list = f_ids if self.offline_mode else [id_stamp['additional']['time']['crtime']+id_stamp['additional']['size'] for id_stamp in contents]
                 buttons = make_buttons(button_metadata, self.file_display_formula, self.scroll_view)
@@ -746,16 +748,12 @@ class SInteractivePanel(ui.View):
     @ui.in_background
     def open_file(self, sender_data, file=None, id: int=None):
         
-        def open_text(name):
-            try:
-                with open(name, 'r') as r_file:
-                    dialogs.text_dialog(title=name, text=r_file.read())
-            except FileNotFoundError:
-                # TODO: Test if this actually works.
+        def download_progress(file, ori_size):
+            while (os.stat(file).st_size/ori_size)*100 < 100:
+                sleep(1)
                 
-                id = str(os.path.basename(name)).split('-')[0]
-                self.offline_files.remove_cache_index('rm', [id])
-                         
+                current_size = os.stat(file).st_size
+                print(f'{file} > {round((current_size/ori_size)*100)}%')
         try:
             os.mkdir('output')
         except FileExistsError:
@@ -769,34 +767,39 @@ class SInteractivePanel(ui.View):
                  
                 file_extension = true_name.split('.')[-1].lower() 
                 
-                if file_extension in photo_extensions+unicode_file+special_extensions:
+                if file_extension in photo_extensions+unicode_file+specialx_extensions+video_extensions+audio_extensions:
                     
                     if id and not self.cache.id_in_list(id):
-                        if not self.offline_mode:
-                            link = self.nas.get_download_url(true_path) 
-                            
-                            with open(true_name, 'wb') as file:
-                                with io.BytesIO(requests.get(link).content) as data:
-                                    file.write(data.getvalue())
-                            
+                        if not self.offline_mode: 
+                            size = self.nas.get_file_info(true_path, additional=['size'])['data']['files'][0]['additional']['size']
+                            download = False
+            
+                            if size >= 838860800: # 800 MBs
+                                return console.alert('This file is too large.')
+                                
+                            elif size >= 22*(10**6):
+                                format_size = s(int(size), system=alternative)
+                                download = console.alert(f'This file is quite large ({format_size}) do you want to download?', '', 'Yes')
+                                if not download:
+                                    return
+                                    
+                            with open(true_name, 'w+') as _:
+                                pass
+                                
+                            Thread(target=download_progress, args=(true_name,size,)).start() if download else None 
+                            self.nas.get_file(true_path, in_root=True)
                             self.offline_files.change_cache_index('ap', [id], [[str(self.name)[1:], f"{id}-{true_name}"]])
                         else:
                             true_name = f"./{cache_folder}/{true_name}"
                             
-                        if file_extension in photo_extensions+special_extensions:
-                            console.quicklook(true_name)
-                        else:
-                            open_text(true_name)
+                        console.quicklook(true_name)
                             
                         shutil.move(true_name, f'./{cache_folder}/{id}-{true_name}') if not self.offline_mode else None
                     else:
                         actual_file_ = self.cache.get_file_from_id(id)
                         path = f'./{cache_folder}/{id}-{actual_file_}'
                         
-                        if file_extension in photo_extensions+special_extensions:
-                            console.quicklook(path)
-                        else:
-                            open_text(path)
+                        console.quicklook(path)
                          
                 else:
                     console.alert('Cannot open this file.')
@@ -871,8 +874,11 @@ class ImgViewDelegate(ui.ListDataSource):
                 self.cache_name[fn] = f'{file_id}-{fn}'
                 
                 with open(f'./{cache_folder}/{file_id}-{fn}', 'wb') as file:
-                    with io.BytesIO(requests.get(url).content) as b: # Download Image from URL
-                        file.write(b.getvalue())
+                    try:
+                        with io.BytesIO(requests.get(url).content) as b: # Download Image from URL
+                            file.write(b.getvalue())
+                    except requests.exceptions.ConnectionError:
+                        console.alert("I'm sorry but the connection was lost. (Timeout) This can happen while opening too many photos within ImageView, working on a fix.'")
                 
                 self.added_files.append(fn)
                 f = f'{self.sip.name}/{self.sip._s_dir}'
