@@ -767,7 +767,7 @@ class SInteractivePanel(ui.View):
                  
                 file_extension = true_name.split('.')[-1].lower() 
                 
-                if file_extension in photo_extensions+unicode_file+specialx_extensions+video_extensions+audio_extensions:
+                if file_extension in photo_extensions+unicode_file+special_extensions+video_extensions+audio_extensions:
                     
                     if id and not self.cache.id_in_list(id):
                         if not self.offline_mode: 
