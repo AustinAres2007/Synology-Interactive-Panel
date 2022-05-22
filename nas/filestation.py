@@ -981,7 +981,7 @@ class FileStation:
 
         return self.request_data(api_name, api_path, req_param)
 
-    def get_file(self, path=None) -> Generator:
+    def get_file(self, path=None, in_root=False) -> Generator:
         api_name = 'SYNO.FileStation.Download'
         info = self.file_station_list[api_name]
         api_path = info['path']
@@ -1021,7 +1021,7 @@ class FileStation:
                         else:
                             filename = filename[:file_ext]+f'_{x}'+filename[file_ext:]; break
 
-        with open(fullpath+filename, 'wb') as f:
+        with open(fullpath+filename if not in_root else filename, 'wb') as f:
             for chunk in r.iter_content(chunk_size=4194304):
                 if chunk:
                     f.write(chunk)
