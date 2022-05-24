@@ -78,6 +78,8 @@ import photos
 import shutil
 import json
 
+
+from datetime import datetime
 from math import floor
 from requests.exceptions import ConnectionError
 from threading import Thread
@@ -106,6 +108,7 @@ mode = 'dark' if mode_.userInterfaceStyle() == 2 else 'light'
 file_colour = cfg[mode]['fl_color'] 
 background_color = cfg[mode]['bk_color'] 
 title_bar_color = cfg[mode]['tb_color'] 
+file_info_color = cfg[mode]['fi_color']
 
 if len(argv) >= 5:
     
@@ -166,6 +169,7 @@ scale = cfg['scale']
 offset = cfg['offset']
 animation_length = cfg['anime_length']
 style = cfg['orientation']
+file_info = cfg['file_info']
 
 if style == 'panel' and auto_mode:
     offset = 16 if str(UIDevice.model()) == 'iPad' else 50
@@ -184,8 +188,9 @@ elif style not in ('full_screen', 'panel') and auto_mode:
 else:
     pass
 
-frame_val = 1020
-extra = 35     
+frame_val = 1020 # Default 1020
+extra = 60 # Default: 35
+f_pos = 200 # Default 200
 
 picker = 'black'
 assets = {}
@@ -217,7 +222,7 @@ def make_buttons(*args):
         item = ui.Button()
             
         if i % fpr == 0 and i != 0:
-            y += 200
+            y += f_pos+extra
             x = args[1][0]
             
         elif args[1]:
@@ -304,7 +309,7 @@ class SInteractivePanel(ui.View):
             self.item = self.nas = self.last_folder = None
             self.off = self.photoview = self.load_buffer = self.is_pointing = self.download = False
             
-            self.file_display_formula = (frame_val*1/offset, spacing, frame_val/(scale*2), frame_val/(scale*2)+35, self.fpr)
+            self.file_display_formula = (frame_val*1/offset, spacing, frame_val/(scale*2), frame_val/(scale*2)+extra, self.fpr)
             
             # Define the scrollable area, only done on initialisation, when going through folders, it's done in render_view
             
@@ -329,7 +334,7 @@ class SInteractivePanel(ui.View):
         
     def layout(self):
         self.fpr = floor((self.width-spacing)/(frame_val/(scale*2)))
-        self.file_display_formula = (frame_val*1/offset, spacing, frame_val/(scale*2), frame_val/(scale*2)+35, self.fpr)
+        self.file_display_formula = (frame_val*1/offset, spacing, frame_val/(scale*2), frame_val/(scale*2)+extra, self.fpr)
         
         self.render_view(self.name)
     
@@ -483,7 +488,7 @@ class SInteractivePanel(ui.View):
                     id_ = file_id_list[ind]
                     borders = 1 if debug else 0
                     
-                    file_label_position_y = 160+4
+                    file_label_position_y = 167+4
                     file_label_position_x = (25 if folder else 35)
                 
                     file_lable = ui.Label(height=20, flex=flex, text=bnt.title, text_color=file_colour, border_width=borders, font=font)
@@ -494,20 +499,29 @@ class SInteractivePanel(ui.View):
                     bnt.add_subview(self.bnts[ind])
             
                     file_lable.x = file_label_position_x
-                    file_lable.y = file_label_position_y+10
+                    file_lable.y = file_label_position_y+20
                     file_lable.width = 160-file_lable.x
                     
-                    cache_check = ui.ImageView(image=assets['cache' if self.cache.id_in_list(id_) else 'cache_nf'], height=20, width=25, x=file_label_position_x-25, y=file_label_position_y+10, border_width=borders)  
+                    cache_check = ui.ImageView(image=assets['cache' if self.cache.id_in_list(id_) else 'cache_nf'], height=20, width=25, x=file_label_position_x-25, y=file_label_position_y+20, border_width=borders)  
                     
-                    if not folder and not self.offline_mode: 
-                        size_lable = ui.Label(height=20, flex=flex, text=s(contents[ind]['additional']['size'], system=alternative), text_color=file_colour, border_width=borders, font=font)
+                    if (not folder and not self.offline_mode) and file_info: 
+                        unix_stamp = int(contents[ind]['additional']['time']['crtime'])
+        
+                        size_lable = ui.Label(height=20, flex=flex, text=s(contents[ind]['additional']['size'], system=alternative), text_color=file_info_color, border_width=borders, font=font)
+                        time_lable = ui.Label(height=20, flex=flex, text=str(datetime.fromtimestamp(unix_stamp))[:10], text_color=file_info_color, border_width=borders, font=font)
                         
                         size_lable.x = file_label_position_x
                         size_lable.y = file_label_position_y+20
                         size_lable.width = 160-file_lable.x
-                        file_lable.y = file_label_position_y
+                        
+                        time_lable.x = file_label_position_x
+                        time_lable.y = file_label_position_y+40
+                        time_lable.width = 160-file_lable.x
+                        
+                        file_lable.y = file_label_position_y+3
                         
                         bnt.add_subview(size_lable)
+                        bnt.add_subview(time_lable)
 
                     self.bnts[ind].x = 15
                     self.bnts[ind].y = 15
@@ -529,7 +543,7 @@ class SInteractivePanel(ui.View):
                 r = round(i/self.fpr+i%self.fpr)-(2 if i%self.fpr==2 else 0)
                 
                 
-                self.scroll_view.content_size = (w/self.fpr, (default_height*r)+((200-default_height)*r)+200)
+                self.scroll_view.content_size = (w/self.fpr, (default_height*r)+((f_pos-default_height)*r)+f_pos)
                 self.name = path
                 
                 ui.animate(self.animation_off_ld, animation_length-.1)
@@ -795,7 +809,11 @@ class SInteractivePanel(ui.View):
                                 pass
                                 
                             Thread(target=download_progress, args=(true_name,size,)).start() if download else None 
-                            self.nas.get_file(true_path, in_root=True)
+                            
+                            try:
+                                self.nas.get_file(true_path, in_root=True)
+                            except requests.exceptions.ChunkedEncodingError:
+                                return console.alert("Lost connection, did you shutdown your device while media was downloading?")
                             self.offline_files.change_cache_index('ap', [id], [[str(self.name)[1:], f"{id}-{true_name}"]])
                         else:
                             true_name = f"./{cache_folder}/{true_name}"
