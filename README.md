@@ -17,7 +17,7 @@ Can view files, folders, and images.
   <NAS URL> <Port> <Username> <Password> <root>
  
   
-  1. NAS URL  >  nasname.synology.me
+  1. NAS URL  >  nasname.synology.me or IP
   
   1. Port  >  Is always 5001, unless configured in NAS settings
   
