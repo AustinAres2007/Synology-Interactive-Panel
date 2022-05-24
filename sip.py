@@ -1,4 +1,7 @@
 """
+
+IMPORTANT NOTE: This is an experimental build, and is to not be released.
+
 Only Programmed on iPad Pro third generations, has NOT been tested with other models. On latest version of python avalible on Pythonista (Python 3.6)
 
 Made by Austin Ares, 
@@ -30,6 +33,8 @@ TODO:
     
     - Bugs / Issues
 
+    ? at the end = Possibly fixed.
+    
     When logged in with an account that is missing permissions, it returns no graceful error. (Bug, Fixed)
     When spamming Q or E (To go back a directory, or to go forward) when done enough, SiP will freeze. (Bug, Fixed)
     When using motion controls with PhotoView, SiP will also respond to these. (Bug, Fixed)
@@ -43,7 +48,7 @@ TODO:
     When downloading photos to be viewed within ImgView, if the user shuts down pythonista, the files that were being downloaded will be empty, and will still be within ImgView cache (I.E: Corrupted/Empty). And the images that were downloaded would not be updated in the occ.json index. (Major Bug, Fixed)
     When uploading files en masse, the file IDs can be very similar or identical, it is fine if they are similar, but if they are identical, this will override the last file with the same ID, this is obviouly catastropic as you could be missing 10s or 100s of files from the cache. (Major Bug, Fixed)
     When loading a big files (I'd say over 50 MBs) It loads the file, but there is no indicator, and SiP does not respond. Find a way to fix this. (Issue, Fixed)
-    When using ImageView with a lot of files, there can be connection issues and long load times (Issue)
+    When using ImageView with a lot of files, there can be connection issues and long load times (Issue, Fixed?)
     
     - Concepts
     
@@ -78,6 +83,7 @@ from requests.exceptions import ConnectionError
 from threading import Thread
 from sys import argv, exit
 from time import sleep
+from concurrent.futures import ThreadPoolExecutor
 
 try:
     import config
@@ -338,6 +344,8 @@ class SInteractivePanel(ui.View):
             os.mkdir(cache_folder)
             
             print('Cleared ImageView Cache')
+        elif command == 'cwd':
+            console.alert(f"Current working directory: {os.getcwd()}")
                 
     def make_media(self):
         if self.offline_mode:
@@ -777,13 +785,13 @@ class SInteractivePanel(ui.View):
                             if size >= 838860800: # 800 MBs
                                 return console.alert('This file is too large.')
                                 
-                            elif size >= 22*(10**6):
+                            elif size >= 22*(10**6): # 22 MBs
                                 format_size = s(int(size), system=alternative)
                                 download = console.alert(f'This file is quite large ({format_size}) do you want to download?', '', 'Yes')
                                 if not download:
                                     return
                                     
-                            with open(true_name, 'w+') as _:
+                            with open(true_name, 'w+'):
                                 pass
                                 
                             Thread(target=download_progress, args=(true_name,size,)).start() if download else None 
@@ -840,14 +848,15 @@ class ImgViewDelegate(ui.ListDataSource):
     def __init__(self, sip: SInteractivePanel):
                 
         self.sip = sip
-        self.files = [file for file in sip._files]
+        self.files = [file for file in sip._files if str(file).split('.')[-1].lower() in photo_extensions]
         self.added_files = []
         self.cache_name = {}
+        self.threads_finished = 0
         
-        threads = []
+        ui.ListDataSource.__init__(self, self.files)
         files_id_fetch = sip.nas.get_file_list(f'{sip.name}/{sip._s_dir}', additional=['time', 'size'])['data']['files']
         
-        ids = {item_sctr['name']: int(item_sctr['additional']['time']['crtime']+item_sctr['additional']['size']) for item_sctr in files_id_fetch}
+        ids = {item_sctr['name']: int(item_sctr['additional']['time']['crtime']+item_sctr['additional']['size']) for item_sctr in files_id_fetch if item_sctr['name'].split('.')[-1].lower() in photo_extensions}
         
         file_cache = open(offline_contents, 'r+' if os.path.isfile(offline_contents) else "w+", encoding='utf-8')
         
@@ -859,59 +868,48 @@ class ImgViewDelegate(ui.ListDataSource):
             file_cache.truncate(0)
             file_cache.write('{}')
             file_cache.close()
-        
-        def get_image(url, fn): # Downloads an Image
-            if not os.path.isdir(cache_folder):
-                os.mkdir(cache_folder)
-            
+                    
+        def get_image(url, fn, id: int=None): # Downloads an Image
             try:
-                main_data = self.sip.nas.get_file_info(f'{self.sip.name}/{self.sip._s_dir}/{fn}', additional=['time', 'size'])['data']['files'][0]['additional']
-                unix_stamp = main_data['time']['crtime']
-                file_size = main_data['size']
+                filename = f'{id}-{fn}'
+                self.cache_name[fn] = filename
                 
-                file_id = unix_stamp+file_size
-                
-                self.cache_name[fn] = f'{file_id}-{fn}'
-                
-                with open(f'./{cache_folder}/{file_id}-{fn}', 'wb') as file:
+                with open(f'./{cache_folder}/{filename}', 'wb') as file:
                     try:
                         with io.BytesIO(requests.get(url).content) as b: # Download Image from URL
                             file.write(b.getvalue())
                     except requests.exceptions.ConnectionError:
                         console.alert("I'm sorry but the connection was lost. (Timeout) This can happen while opening too many photos within ImageView, working on a fix.'")
-                
-                self.added_files.append(fn)
-                f = f'{self.sip.name}/{self.sip._s_dir}'
-                local_cache[str(file_id)] = [f[1:], f'{file_id}-{fn}']
+                    else:
+                        full_name = f'{self.sip.name}/{self.sip._s_dir}'[1:]
+                        self.added_files.append(fn)
+                        local_cache[str(id)] = [full_name, filename]
+                        
+                        self.threads_finished += 1
+                        
+                        if self.threads_finished >= len(ids):
+                            with open(offline_contents, 'w') as write_cache:
+                                json.dump(local_cache, write_cache, indent=5)
                 
             except requests.exceptions.ChunkedEncodingError:
                 console.alert("Could not download file. Did you shut down your iPad\nwhile ImageView was open?")
-                self.sip.img_view.close() 
-            finally:
-                threads.remove(file_id)
+                self.sip.img_view.close()
         
-        for fn in self.files: # Iterate for every file in the directory (that is an image)
-            try:
-                if not os.path.isfile(f'./{cache_folder}/{ids[fn]}-{fn}'):
-                    Thread(target=get_image, args=(sip.nas.get_download_url(f'{sip.name}/{sip._s_dir}/{fn}'), fn,)).start()
-                    threads.append(ids[fn])
-            
-                else:
-                    self.cache_name[fn] = f'{ids[fn]}-{fn}'
-                    self.added_files.append(fn)
-                
-            except IndexError: # Dunno why this exception in here, thoughts it may break
-                break
+        if not os.path.isdir(cache_folder):
+            os.mkdir(cache_folder)
         
-        def _check_threads():
-            while threads:
-                sleep(1)
-            else: 
-                with open(offline_contents, 'w') as write_cache:
-                    json.dump(local_cache, write_cache, indent=5)
+        download_urls = [(sip.nas.get_download_url(f"{sip.name}/{sip._s_dir}/{name}"), name, ids[name]) for name in ids.keys() if int(ids[name]) not in sip.cache.get_all_ids() and name.split('.')[-1].lower() in photo_extensions]
+        
+        self.added_files = [file for file in ids.keys() if ids[file] in sip.cache.get_all_ids()]
+        self.cache_name = {file: f"{ids[file]}-{file}" for file in ids.keys() if ids[file] in sip.cache.get_all_ids()}
+        
+        try:
+            tpe = ThreadPoolExecutor(max_workers=8)
+            {tpe.submit(get_image, url[0], url[1], url[2]): url for url in download_urls}
+            tpe.shutdown(wait=False)
                     
-        Thread(target=_check_threads).start()
-        ui.ListDataSource.__init__(self, self.files)
+        except Exception as e:
+            console.alert(f"Error: {e}")
 
     def tableview_number_of_rows(self, tableview, section):
         return len(self.files)
@@ -921,7 +919,6 @@ class ImgViewDelegate(ui.ListDataSource):
         cell.text_label.text = self.files[row]
         cell.text_label.text_color = file_colour
         cell.text_label.font = font
-        
         cell.background_color = background_color
         cell.selected_background_view = ui.View(background_color=title_bar_color)
         
@@ -933,9 +930,9 @@ class ImgViewDelegate(ui.ListDataSource):
     
     @ui.in_background
     def tableview_did_select(self, tableview, section, row):
-        
         if self.added_files and len(self.added_files)-1 >= row:
             folder_contents = [f'./{cache_folder}/{self.cache_name[file]}' for file in self.added_files]
+            print(folder_contents)
             console.quicklook(folder_contents)
         else:
             print('This image has not downloaded yet.')
