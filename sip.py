@@ -28,8 +28,11 @@ TODO:
     Add digital left / right buttons on PhotoView to navigate through images (Function, Removed)
     Add copy and paste ability (Function, Done)
     Add a way to view a download status (Function, Done)
-    Add timestamps of when the file was created (Function)
+    Add timestamps of when the file was created (Function, Done)
     Add a way to listen to audio & video within SiP (Function, Done)
+    Edit text files (Function)
+    Add login infomation to sip-config.cfg (Function)
+    Upload files from iCloud / Local storage to NAS (Feature)
     
     - Bugs / Issues
 
@@ -48,7 +51,7 @@ TODO:
     When downloading photos to be viewed within ImgView, if the user shuts down pythonista, the files that were being downloaded will be empty, and will still be within ImgView cache (I.E: Corrupted/Empty). And the images that were downloaded would not be updated in the occ.json index. (Major Bug, Fixed)
     When uploading files en masse, the file IDs can be very similar or identical, it is fine if they are similar, but if they are identical, this will override the last file with the same ID, this is obviouly catastropic as you could be missing 10s or 100s of files from the cache. (Major Bug, Fixed)
     When loading a big files (I'd say over 50 MBs) It loads the file, but there is no indicator, and SiP does not respond. Find a way to fix this. (Issue, Fixed)
-    When using ImageView with a lot of files, there can be connection issues and long load times (Issue, Fixed?)
+    When using ImageView with a lot of files, there can be connection issues and long load times (Issue, Fixed)
     
     - Concepts
     
@@ -102,8 +105,7 @@ except ModuleNotFoundError as e:
 cfg = config.Config('sip-config.cfg')
 w, h = ui.get_screen_size()
 
-mode_ = objc_util.ObjCClass('UITraitCollection').currentTraitCollection()
-mode = 'dark' if mode_.userInterfaceStyle() == 2 else 'light'
+mode = ui.get_ui_style()
 
 file_colour = cfg[mode]['fl_color'] 
 background_color = cfg[mode]['bk_color'] 
@@ -160,7 +162,6 @@ default_height = h*1/5
 
 files_per_row = cfg['files_per_row']
 auto_mode = cfg['auto_mode']
-font = (cfg['font'], cfg['font_size'])
 interval = cfg['interval']
 debug = cfg['debug']
 flex = cfg['flex']
@@ -168,45 +169,28 @@ spacing = cfg['spacing']
 scale = cfg['scale']
 offset = cfg['offset']
 animation_length = cfg['anime_length']
-style = cfg['orientation']
 file_info = cfg['file_info']
 
-if style == 'panel' and auto_mode:
+font = (cfg['font'], cfg['font_size'])
+font_fi = (cfg['font'], cfg['font_size_fi'])
+
+if auto_mode:
     offset = 16 if str(UIDevice.model()) == 'iPad' else 50
     scale = 3
     spacing = 50
     files_per_row = 6
-    
-elif style == 'full_screen' and auto_mode:
-    offset = 25
-    scale = 3
-    spacing = 65
-    files_per_row = 3
-    
-elif style not in ('full_screen', 'panel') and auto_mode:
-    console.alert(f'Orientation setting: {style} not supported. Only full_screen, and panel are supported.')
-else:
-    pass
 
 frame_val = 1020 # Default 1020
 extra = 60 # Default: 35
 f_pos = 200 # Default 200
 
-picker = 'black'
-assets = {}
+assets = {os.path.splitext(file)[0]: ui.Image.named(f'{asset_location}/{file}') for file in os.listdir(asset_location) if os.path.splitext(file)[-1]=='.png'}
 
-for file in os.listdir(asset_location):
-    fd = file.split('.')
-    if fd[-1] == 'png':
-        assets[fd[0]] = ui.Image.named(f'{asset_location}/{file}')
-
-audio_extensions = ['ogg', 'mp3', 'flac', 'alac', 'mp2', 'wav', 'aup']
+audio_extensions = ['ogg', 'mp3', 'flac', 'alac', 'wav']
 video_extensions = ['mov', 'mp4', 'mkv']
 photo_extensions = ['png','jpeg','jpg','heic', 'gif']
 unicode_file = ['txt', 'py', 'json', 'js', 'c', 'cpp', 'ini']
 special_extensions = ['csv', 'pdf', 'docx']
-
-print(f' < Debug Config > \n\nSpacing: {spacing}\nFiles Per Row: {files_per_row}\nWidth: {w}\nHeight: {h}\n\n-----\n\n') if debug else None
 
 def make_buttons(*args):
 
@@ -322,6 +306,8 @@ class SInteractivePanel(ui.View):
             self.left_button_items = [ui.ButtonItem(image=ui.Image.named('iob:chevron_left_32'), tint_color=file_colour, action=lambda _: self.go_back(), enabled=True), ui.ButtonItem(image=ui.Image.named('typb:Spanner'), tint_color=file_colour, action=lambda _: self.nas_console(), enabled=True)]
             self.right_button_items = [ui.ButtonItem(image=ui.Image.named('typb:Write'), tint_color=file_colour, action=lambda _: self.make_media(), enabled=True), ui.ButtonItem(image=ui.Image.named('typb:Archive'), tint_color=file_colour, action=lambda _: self.import_foreign_media(), enabled=True)]
             
+            # ui.ButtonItem(image=ui.Image.named('iob:grid_256'), tint_color=file_colour, action=lambda _: self.change_order(), enabled=True)
+            
 
             self.add_subview(ui.Label(name='ld', text=self.text, x=self.center[0], y=self.center[1]/2, alignment=ui.ALIGN_LEFT, font=font,   text_color=file_colour))
             
@@ -338,7 +324,9 @@ class SInteractivePanel(ui.View):
         
         self.render_view(self.name)
     
-    
+    def change_order(self):
+        order = dialogs.list_dialog('What order do you want files displayed?', multiple=False)
+        
     def nas_console(self):
         command = console.input_alert('Debug Console')
             
@@ -349,8 +337,6 @@ class SInteractivePanel(ui.View):
             os.mkdir(cache_folder)
             
             print('Cleared ImageView Cache')
-        elif command == 'cwd':
-            console.alert(f"Current working directory: {os.getcwd()}")
                 
     def make_media(self):
         if self.offline_mode:
@@ -453,7 +439,7 @@ class SInteractivePanel(ui.View):
                     ui.animate(self.animation_on_ld, animation_length-.1)
                     
                     if not self.offline_mode:
-                        contents_d = self.nas.get_file_list(path, additional=['size', 'time']) 
+                        contents_d = self.nas.get_file_list(path, additional=['size', 'time'], sort_by='size') 
                         contents = contents_d['data']['files']
             
                     else:
@@ -488,7 +474,7 @@ class SInteractivePanel(ui.View):
                     id_ = file_id_list[ind]
                     borders = 1 if debug else 0
                     
-                    file_label_position_y = 167+4
+                    file_label_position_y = 167+6
                     file_label_position_x = (25 if folder else 35)
                 
                     file_lable = ui.Label(height=20, flex=flex, text=bnt.title, text_color=file_colour, border_width=borders, font=font)
@@ -499,25 +485,25 @@ class SInteractivePanel(ui.View):
                     bnt.add_subview(self.bnts[ind])
             
                     file_lable.x = file_label_position_x
-                    file_lable.y = file_label_position_y+20
+                    file_lable.y = file_label_position_y+10
                     file_lable.width = 160-file_lable.x
                     
-                    cache_check = ui.ImageView(image=assets['cache' if self.cache.id_in_list(id_) else 'cache_nf'], height=20, width=25, x=file_label_position_x-25, y=file_label_position_y+20, border_width=borders)  
+                    cache_check = ui.ImageView(image=assets['cache' if self.cache.id_in_list(id_) else 'cache_nf'], height=20, width=25, x=file_label_position_x-26, y=file_label_position_y+10, border_width=borders)  
                     
                     if (not folder and not self.offline_mode) and file_info: 
                         unix_stamp = int(contents[ind]['additional']['time']['crtime'])
         
-                        size_lable = ui.Label(height=20, flex=flex, text=s(contents[ind]['additional']['size'], system=alternative), text_color=file_info_color, border_width=borders, font=font)
-                        time_lable = ui.Label(height=20, flex=flex, text=str(datetime.fromtimestamp(unix_stamp))[:10], text_color=file_info_color, border_width=borders, font=font)
+                        size_lable = ui.Label(height=15, flex=flex, text=s(contents[ind]['additional']['size'], system=alternative), text_color=file_info_color, border_width=borders, font=font_fi)
+                        time_lable = ui.Label(height=15, flex=flex, text=str(datetime.fromtimestamp(unix_stamp))[:10], text_color=file_info_color, border_width=borders, font=font_fi)
                         
                         size_lable.x = file_label_position_x
-                        size_lable.y = file_label_position_y+20
-                        size_lable.width = 160-file_lable.x
+                        time_lable.y = size_lable.y = file_label_position_y+25
+                        size_lable.width = 44 
                         
-                        time_lable.x = file_label_position_x
-                        time_lable.y = file_label_position_y+40
-                        time_lable.width = 160-file_lable.x
+                        time_lable.x = file_label_position_x+45
+                        time_lable.width = 80
                         
+                        cache_check.y = file_label_position_y+13
                         file_lable.y = file_label_position_y+3
                         
                         bnt.add_subview(size_lable)
@@ -536,14 +522,18 @@ class SInteractivePanel(ui.View):
                     self.scroll_view.add_subview(bnt)
                 
                 for o, a in enumerate(self.bnts):
-                    a.action = lambda a: self.context_menu(a)    
-                    self.scroll_view.subviews[o].add_subview(a)
-                    
+                    try:
+                        a.action = lambda a: self.context_menu(a)    
+                        self.scroll_view.subviews[o].add_subview(a)
+                    except IndexError:
+                        return console.alert("Fatal Error")
+                        
                 i = len(self.scroll_view.subviews)
-                r = round(i/self.fpr+i%self.fpr)-(2 if i%self.fpr==2 else 0)
+                er = i%self.fpr 
+                r = round(i/self.fpr+er)-(int(not bool(er)))
                 
                 
-                self.scroll_view.content_size = (w/self.fpr, (default_height*r)+((f_pos-default_height)*r)+f_pos)
+                self.scroll_view.content_size = (w/self.fpr, (default_height*r)+(((f_pos-default_height)+extra)*r)+f_pos)
                 self.name = path
                 
                 ui.animate(self.animation_off_ld, animation_length-.1)
@@ -709,12 +699,6 @@ class SInteractivePanel(ui.View):
         console.hud_alert(f'Downloading "{sender_data.name}"')
         Thread(target=self.check_download_status, args=(sender_data,), name='b').start()
     
-    def display_media(self, path: str):
-        if path.split('.')[-1] in unicode_file:
-            console.open_in(path)
-        else:
-            console.quicklook(path)
-    
     def get_key_commands(self):
         return [{'input': 'q'}, {'input': 'e'}, {'input': 't', 'modifiers': 'cmd'}]
     
@@ -842,7 +826,7 @@ class SInteractivePanel(ui.View):
                 if bool(c):
                     
                     self.img_view = ImgViewMain(self)
-                    self.img_view.present(style, title_bar_color=title_bar_color, title_color=file_colour, hide_close_button=True)
+                    self.img_view.present('panel', title_bar_color=title_bar_color, title_color=file_colour, hide_close_button=True)
                       
                 else:
                     self.render_view(true_path)
@@ -853,6 +837,7 @@ class ImgViewMain(ui.View):
         self.frame = (0, 0, 500, 500)
         self.name = s._s_dir
         self.s = s
+        
         tb = ui.TableView(flex='wh', frame=self.frame)
         tb.data_source = tb.delegate = ImgViewDelegate(sip=s)
         tb.bg_color = background_color
@@ -950,7 +935,6 @@ class ImgViewDelegate(ui.ListDataSource):
     def tableview_did_select(self, tableview, section, row):
         if self.added_files and len(self.added_files)-1 >= row:
             folder_contents = [f'./{cache_folder}/{self.cache_name[file]}' for file in self.added_files]
-            print(folder_contents)
             console.quicklook(folder_contents)
         else:
             print('This image has not downloaded yet.')
@@ -959,4 +943,4 @@ if __name__ == '__main__':
     View = SInteractivePanel() # Make an instance of the main script
     
     View.connect() # Establish connection to NAS
-    View.present(style, hide_close_button=True, title_bar_color=title_bar_color, title_color=file_colour) # Display initialised screen content
+    View.present('panel', hide_close_button=True, title_bar_color=title_bar_color, title_color=file_colour) # Display initialised screen content
