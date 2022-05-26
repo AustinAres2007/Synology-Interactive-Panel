@@ -9,6 +9,12 @@ Made for Pythonista, programmed on an iPad Pro 11″ and NOT tested on another m
 
 Can view files, folders, and images.
 
+This tool is to be used outside of the Synology NAS's local network.
+If you are within the local network of the NAS, I recommend connecting to it directly,
+or use FE File Explorer if you are on iOS, very good app.
+
+I made this mostly for myself, as I disliked the DS File UI and how it functioned.
+Though use it if you please, but be warned this is not made by a professional.
 
 ## NAS Settings
 
