@@ -11,7 +11,7 @@ Can view files, folders, and images.
 
 This tool is to be used outside of the Synology NAS's local network.
 If you are within the local network of the NAS, I recommend connecting to it directly,
-or use FE File Explorer if you are on iOS, very good app.
+or use [FE File Explorer](https://apps.apple.com/gb/app/fe-file-explorer-file-manager/id510282524) if you are on iOS, very good app.
 
 I made this mostly for myself, as I disliked the DS File UI and how it functioned.
 Though use it if you please, but be warned this is not made by a professional.
