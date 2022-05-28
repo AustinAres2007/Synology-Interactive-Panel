@@ -6,6 +6,7 @@ import sys
 from datetime import datetime
 from typing import Generator
 from urllib import parse
+from requests.exceptions import ChunkedEncodingError
 
 from . import auth as syn
 
@@ -709,10 +710,16 @@ class FileStation:
                            'dest_folder_path', 'new_path']:
                 if val is not None:
                     req_param[str(key)] = val
-
-        self._copy_move_taskid = self.request_data(api_name, api_path, req_param)['data']['taskid']
-        self._dir_taskid_list.append(self._copy_move_taskid)
-
+        try:
+            self._copy_move_taskid = self.request_data(api_name, api_path, req_param)
+            self._copy_move_taskid = self._copy_move_taskid['data']['taskid']
+            self._dir_taskid_list.append(self._copy_move_taskid)
+        except KeyError:
+            try:
+                if self._copy_move_taskid['error']['code'] == 1000:
+                    raise UploadError('File already exists.')
+            except:
+                raise UploadError(str(self._copy_move_taskid))
         return 'You can now check the status of request with get_copy_move_status() , ' \
                'your id is: ' + self._copy_move_taskid
 
@@ -1025,7 +1032,6 @@ class FileStation:
             for chunk in r.iter_content(chunk_size=4194304):
                 if chunk:
                     f.write(chunk)
-                    
     def get_download_url(self, path):
         api_name = 'SYNO.FileStation.Download'
         info = self.file_station_list[api_name]
