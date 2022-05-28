@@ -1,10 +1,8 @@
 """
 
-IMPORTANT NOTE: This is an experimental build, and is to not be released.
-
 Only Programmed on iPad Pro third generations, has NOT been tested with other models. On latest version of python avalible on Pythonista (Python 3.6)
 
-Made by Austin Ares, 
+Made by Austin Ares 
 "nas" module made by https://github.com/N4S4/synology-api go check them out.
 
 PS: Modifications were made to the "nas" module to better support what I am making.
@@ -80,7 +78,7 @@ import objc_util
 import photos
 import shutil
 import json
-
+import scene
 
 from datetime import datetime
 from math import floor
@@ -92,12 +90,12 @@ from concurrent.futures import ThreadPoolExecutor
 
 try:
     import config
-    import occ
     
     from hurry.filesize import size as s
     from hurry.filesize import verbose, alternative
     from nas import filestation
     from nas.auth import AuthenticationError
+    from external import occ, gestures
     
 except ModuleNotFoundError as e:
     print(f'"config", "nas", "hurry" or "occ" module not found.\n\nActual Error: {e}'); exit(1)
@@ -107,9 +105,9 @@ w, h = ui.get_screen_size()
 
 mode = ui.get_ui_style()
 
-file_colour = cfg[mode]['fl_color'] 
-background_color = cfg[mode]['bk_color'] 
-title_bar_color = cfg[mode]['tb_color'] 
+file_colour = cfg[mode]['fl_color']
+background_color = cfg[mode]['bk_color']
+title_bar_color = cfg[mode]['tb_color']
 file_info_color = cfg[mode]['fi_color']
 
 if len(argv) >= 5:
@@ -152,15 +150,17 @@ else:
     
 asset_location = './assets'
 
-averg = lambda data_set: max(set(data_set), key = data_set.count)
-contents = lambda dir_c: ((file.title, file.subviews[1].title) for file in dir_c)
+UIDevice = objc_util.ObjCClass('UIDevice')
+UIDeviceCurrent = UIDevice.currentDevice()
 
-UIDevice = objc_util.ObjCClass('UIDevice').currentDevice()
-orientation = UIDevice.orientation()
-    
+orientation = UIDeviceCurrent.orientation()
+
+UIImpactFeedbackGenerator = objc_util.ObjCClass('UIImpactFeedbackGenerator').new()
+UIImpactFeedbackGenerator.prepare()
+
 default_height = h*1/5
 
-files_per_row = cfg['files_per_row']
+files_per_row = cfg['files_per_row'],
 auto_mode = cfg['auto_mode']
 interval = cfg['interval']
 debug = cfg['debug']
@@ -175,13 +175,13 @@ font = (cfg['font'], cfg['font_size'])
 font_fi = (cfg['font'], cfg['font_size_fi'])
 
 if auto_mode:
-    offset = 16 if str(UIDevice.model()) == 'iPad' else 50
+    offset = 16 if str(UIDeviceCurrent.model()) == 'iPad' else 50
     scale = 3
     spacing = 50
     files_per_row = 6
 
 frame_val = 1020 # Default 1020
-extra = 60 # Default: 35
+extra = 40 # Default: 40
 f_pos = 200 # Default 200
 
 assets = {os.path.splitext(file)[0]: ui.Image.named(f'{asset_location}/{file}') for file in os.listdir(asset_location) if os.path.splitext(file)[-1]=='.png'}
@@ -191,6 +191,12 @@ video_extensions = ['mov', 'mp4', 'mkv']
 photo_extensions = ['png','jpeg','jpg','heic', 'gif']
 unicode_file = ['txt', 'py', 'json', 'js', 'c', 'cpp', 'ini']
 special_extensions = ['csv', 'pdf', 'docx']
+
+errors = {
+    119: 'Fatal Error, please reload SiP',
+    401: 'Path does not exist',
+    407: 'Missing permissions to this folder'
+}
 
 def make_buttons(*args):
 
@@ -231,6 +237,45 @@ def make_buttons(*args):
 
 offline_contents = 'occ.json'
 cache_folder = 'ImgView'
+default_tb_args = {'frame': (0,0,400,400), 'separator_color': file_colour, 'bg_color': background_color}
+
+def show_list_dialog(items: list, title_name: str, header: str=None):
+    picked = {'picked': None}
+    kwargs = default_tb_args
+    
+    class TableViewDelegate(ui.ListDataSource):
+    
+        def __init__(self):
+            ui.ListDataSource.__init__(self, items)
+            
+        def tableview_number_of_rows(self, *args):
+            return len(items)
+            
+        def tableview_did_select(self, tableview, section, row):
+            picked['picked'] = tableview.data_source.items[row]
+            tableview.close()
+        
+        def tableview_title_for_header(self, *args):
+            return header
+        
+        def tableview_cell_for_row(self, tb, s, r):
+            cell = ui.TableViewCell()
+            cell.text_label.text = items[r]
+            cell.text_label.text_color = file_colour
+            cell.text_label.font = font
+            
+            cell.background_color = background_color
+            cell.selected_background_view = ui.View(background_color=title_bar_color)
+        
+            return cell
+            
+    tbl = ui.TableView(name=title_name, **kwargs)
+    tbl.data_source = tbl.delegate = TableViewDelegate()       
+
+    tbl.present(style='sheet', title_bar_color=title_bar_color, hide_close_button=True, title_color=file_colour)
+    tbl.wait_modal()  # This method is what makes this a dialog(modal)
+    
+    return picked['picked']
 
 class CacheHandler:
     
@@ -271,53 +316,54 @@ class CacheHandler:
     def clear_cache(self):
         shutil.rmtree(f'./{cache_folder}')
         os.mkdir(cache_folder)
-     
+
+
 class SInteractivePanel(ui.View):
     def __init__(self):
-        try:
-            self.fpr = files_per_row
-            self.text = 'Loading'
-            self.background_color = background_color # Background color of View
-            self.name = root 
-            self.flex = flex
-            self.frame = (0, 0, frame_val, frame_val)
-            self.center = (frame_val/2, frame_val/2)
-            
-            # Make new scroll view
-            
-            self.scroll_view = ui.ScrollView()
-            self.tint_color = file_colour
- 
-            self.bnts = []
-            self.copied = []
-            self.item = self.nas = self.last_folder = None
-            self.off = self.photoview = self.load_buffer = self.is_pointing = self.download = False
-            
-            self.file_display_formula = (frame_val*1/offset, spacing, frame_val/(scale*2), frame_val/(scale*2)+extra, self.fpr)
-            
-            # Define the scrollable area, only done on initialisation, when going through folders, it's done in render_view
-            
-            self.scroll_view.frame = self.frame
-            self.scroll_view.content_size = (w, h)
-            self.scroll_view.flex = flex
-            
-            # Esablish connection, this will continue until script is closed
-            
-            self.left_button_items = [ui.ButtonItem(image=ui.Image.named('iob:chevron_left_32'), tint_color=file_colour, action=lambda _: self.go_back(), enabled=True), ui.ButtonItem(image=ui.Image.named('typb:Spanner'), tint_color=file_colour, action=lambda _: self.nas_console(), enabled=True)]
-            self.right_button_items = [ui.ButtonItem(image=ui.Image.named('typb:Write'), tint_color=file_colour, action=lambda _: self.make_media(), enabled=True), ui.ButtonItem(image=ui.Image.named('typb:Archive'), tint_color=file_colour, action=lambda _: self.import_foreign_media(), enabled=True)]
-            
-            # ui.ButtonItem(image=ui.Image.named('iob:grid_256'), tint_color=file_colour, action=lambda _: self.change_order(), enabled=True)
-            
+        
+        self.fpr = files_per_row
+        self.text = 'Loading'
+        self.background_color = background_color # Background color of View
+        self.name = root 
+        self.flex = flex
+        self.frame = (0, 0, frame_val, frame_val)
+        self.center = (frame_val/2, frame_val/2)
+        
+        # Make new scroll view
+        
+        self.scroll_view = ui.ScrollView()
+        self.tint_color = file_colour
 
-            self.add_subview(ui.Label(name='ld', text=self.text, x=self.center[0], y=self.center[1]/2, alignment=ui.ALIGN_LEFT, font=font,   text_color=file_colour))
-            
-            self.subviews[0].alpha = 0.0
-            self.add_subview(self.scroll_view) # Display the files in the root
+        self.bnts = []
+        self.copied = []
+        self.item = self.nas = self.last_folder = None
+        self.off = self.photoview = self.load_buffer = self.is_pointing = self.download = False
         
-        except ConnectionError: # If no connection
-            console.alert('No Connection')
-            self.close()
+        self.file_display_formula = (frame_val*1/offset, spacing, frame_val/(scale*2), frame_val/(scale*2)+extra, self.fpr)
         
+        # Define the scrollable area, only done on initialisation, when going through folders, it's done in render_view
+                
+        self.scroll_view.frame = self.frame
+        self.scroll_view.content_size = (w, h)
+        self.scroll_view.flex = flex
+        
+        self.order = 'name'
+        self.left_button_items = [ui.ButtonItem(image=ui.Image.named('iob:chevron_left_32'), tint_color=file_colour, action=lambda _: self.go_back(), enabled=True), ui.ButtonItem(image=ui.Image.named('typb:Spanner'), tint_color=file_colour, action=lambda _: self.nas_console(), enabled=True), ui.ButtonItem(image=ui.Image.named('iob:grid_256'), tint_color=file_colour, action=lambda _: self.change_order(), enabled=True)]
+        self.right_button_items = [ui.ButtonItem(image=ui.Image.named('typb:Write'), tint_color=file_colour, action=lambda _: self.make_media(), enabled=True), ui.ButtonItem(image=ui.Image.named('typb:Archive'), tint_color=file_colour, action=lambda _: self.import_foreign_media(), enabled=True)]
+        self.add_subview(self.scroll_view) # Display the files in the root
+
+        
+    def get_name(self):
+        return self.name
+        
+    def drop(self, *args):
+        if self.name != os.path.dirname(args[0]):
+            try:
+                self.nas.start_copy_move(args[0], self.name)
+                self.render_view(self.name)
+            except filestation.UploadError:
+                console.alert(f'File: "{args[0]}" already exists at this location.')
+                 
     def layout(self):
         self.fpr = floor((self.width-spacing)/(frame_val/(scale*2)))
         self.file_display_formula = (frame_val*1/offset, spacing, frame_val/(scale*2), frame_val/(scale*2)+extra, self.fpr)
@@ -325,7 +371,10 @@ class SInteractivePanel(ui.View):
         self.render_view(self.name)
     
     def change_order(self):
-        order = dialogs.list_dialog('What order do you want files displayed?', multiple=False)
+        nas_order = {'File Owner': 'user', 'File Group': 'group', 'File Size': 'size', 'File Name': 'name', 'Creation Time': 'crtime', 'Last Modified': 'mtime', 'Last Accessed': 'atime', 'Last Change': 'ctime', 'POSIX Permissions': 'posix'}
+        order = show_list_dialog(list(nas_order), 'Sort files by')
+        
+        self.order = nas_order[order] if order else self.order
         
     def nas_console(self):
         command = console.input_alert('Debug Console')
@@ -363,7 +412,13 @@ class SInteractivePanel(ui.View):
                 console.alert('Upload failed, cannot upload files with foreign letters, in the name of the file or the contents.')
                 
         self.render_view(self.name)
+    
+    def file_visability_on(self):
+        self.scroll_view.alpha = 1.0
+    def file_visability_off(self):
+        self.scroll_view.alpha = 0.5
         
+            
     def exit(self):
         try:
             self.close()
@@ -373,6 +428,7 @@ class SInteractivePanel(ui.View):
             
     def connect(self):
         try:
+    
             self.offline_mode = False
             
             self.cache = CacheHandler()
@@ -381,6 +437,17 @@ class SInteractivePanel(ui.View):
             self.cache.check_files(self.offline_files)
             
             self.nas = filestation.FileStation(url, port, user, passw, secure=True, debug=debug)
+            
+            gestures.drop(self.scroll_view, self.drop, str, 
+                animation_func=lambda: ui.animate(self.file_visability_on, duration=0.6), 
+                onBegin_func=lambda: ui.animate(self.file_visability_off, duration=0.6)
+            )
+            
+            gestures.long_press(self.scroll_view, lambda data: self.context_menu(**{
+            'path': None,
+            'data': data,
+            'is_folder': None
+            }))
             
             self.render_view(root)
         except AuthenticationError:
@@ -421,147 +488,155 @@ class SInteractivePanel(ui.View):
                 
     @ui.in_background
     def render_view(self, sender):
-            
-        if not self.load_buffer and not self.photoview and (isinstance(sender, ui.Button) and (sender.title == 'Login' or sender.image.name.endswith('folder.png'))) or isinstance(sender, str) :
-            try:
-                self.subviews[0].text = 'Loading'
-                self.load_buffer = True
-                button_metadata = False
-                
-                path = sender.name if isinstance(sender, ui.Button) else sender
-                
-                borders = 1 if debug else 0
-                ico = lambda nm, is_f: assets['folder'] if is_f else (assets['file'] if nm in unicode_file else (assets['photo'] if nm in photo_extensions else (assets['video'] if nm in video_extensions else (assets['audio'] if nm in audio_extensions else assets['file']))))
-                
-                
+        sender = sender if sender != '/' else root
+        if not self.load_buffer:
+            if not self.photoview and (isinstance(sender, ui.Button) and sender.image.name.endswith('folder.png')) or isinstance(sender, str) :
+                bnts = 0
                 try:
-                    ui.animate(self.animation_off, animation_length)  
-                    ui.animate(self.animation_on_ld, animation_length-.1)
+                    self.load_buffer = True
+                    self.left_button_items[0].enabled = False
+                    button_metadata = False
                     
-                    if not self.offline_mode:
-                        contents_d = self.nas.get_file_list(path, additional=['size', 'time'], sort_by='size') 
-                        contents = contents_d['data']['files']
-            
-                    else:
-                        button_metadata = []
-                        f_ids = []
-                        
-                        for item in self.offline_files.get_content(path[1:], self.offline_files.files):
-                            if item:
-                                c_data = (False, item) if type(item) == str else (True, list(item)[0])
-                                button_metadata.append([borders, file_colour, lambda _: self.render_view, h*1/8, c_data[1], ico(c_data[1].split('.')[-1].lower(), c_data[0]), file_colour, f'{path}/{c_data[1]}', c_data[0]])
-                                f_ids.append(1 if c_data[0] else int(str(c_data[1]).split('-')[0]))
-                        
-                except AttributeError:
-                    self.exit()
-                except KeyError:
-                    if contents_d['error']['code'] == 119:
-                        console.hud_alert(f'Error, please reload script (Error code 119, cannot be fixed by author. Only Synology can fix this)')
-                    else:
-                        console.hud_alert(f"you are missing permissions to this directory.", 'error', 3.5); self.exit()
-                
-                button_metadata = ([borders, file_colour, lambda _: self.render_view, h*1/8, item['name'], ico(item['name'].split('.')[-1].lower(), item['isdir']), file_colour, item['path']] for item in contents) if not button_metadata else button_metadata
-                
-                file_id_list = f_ids if self.offline_mode else [id_stamp['additional']['time']['crtime']+id_stamp['additional']['size'] for id_stamp in contents]
-                buttons = make_buttons(button_metadata, self.file_display_formula, self.scroll_view)
-                dir_status = {}
-                
-                for item in button_metadata if self.offline_mode else contents:
-                    dir_status[item[4] if self.offline_mode else item['name']] = item[8] if self.offline_mode else item['isdir']
-
-                for ind, bnt in enumerate(buttons):
-                    folder = str(bnt.image.name).endswith('folder.png')
-                    id_ = file_id_list[ind]
+                    path = sender.name if isinstance(sender, ui.Button) else sender
+                    
                     borders = 1 if debug else 0
+                    ico = lambda nm, is_f: assets['folder'] if is_f else (assets['file'] if nm in unicode_file else (assets['photo'] if nm in photo_extensions else (assets['video'] if nm in video_extensions else (assets['audio'] if nm in audio_extensions else assets['file']))))
                     
-                    file_label_position_y = 167+6
-                    file_label_position_x = (25 if folder else 35)
-                
-                    file_lable = ui.Label(height=20, flex=flex, text=bnt.title, text_color=file_colour, border_width=borders, font=font)
                     
-                    self.bnts.append(ui.Button(height=25, width=25))
-                    
-                    bnt.add_subview(file_lable)
-                    bnt.add_subview(self.bnts[ind])
-            
-                    file_lable.x = file_label_position_x
-                    file_lable.y = file_label_position_y+10
-                    file_lable.width = 160-file_lable.x
-                    
-                    cache_check = ui.ImageView(image=assets['cache' if self.cache.id_in_list(id_) else 'cache_nf'], height=20, width=25, x=file_label_position_x-26, y=file_label_position_y+10, border_width=borders)  
-                    
-                    if (not folder and not self.offline_mode) and file_info: 
-                        unix_stamp = int(contents[ind]['additional']['time']['crtime'])
-        
-                        size_lable = ui.Label(height=15, flex=flex, text=s(contents[ind]['additional']['size'], system=alternative), text_color=file_info_color, border_width=borders, font=font_fi)
-                        time_lable = ui.Label(height=15, flex=flex, text=str(datetime.fromtimestamp(unix_stamp))[:10], text_color=file_info_color, border_width=borders, font=font_fi)
-                        
-                        size_lable.x = file_label_position_x
-                        time_lable.y = size_lable.y = file_label_position_y+25
-                        size_lable.width = 44 
-                        
-                        time_lable.x = file_label_position_x+45
-                        time_lable.width = 80
-                        
-                        cache_check.y = file_label_position_y+13
-                        file_lable.y = file_label_position_y+3
-                        
-                        bnt.add_subview(size_lable)
-                        bnt.add_subview(time_lable)
-
-                    self.bnts[ind].x = 15
-                    self.bnts[ind].y = 15
-                    self.bnts[ind].flex = flex
-                    self.bnts[ind].border_width = 1 if debug else 0
-                    self.bnts[ind].image = assets['opt']
-                    self.bnts[ind].title = str(dir_status[bnt.title])
-                    self.bnts[ind].name = bnt.title
-                    self.bnts[ind].action = lambda _: self.context_menu(self.bnts[ind])
-                    
-                    bnt.add_subview(cache_check)
-                    self.scroll_view.add_subview(bnt)
-                
-                for o, a in enumerate(self.bnts):
                     try:
-                        a.action = lambda a: self.context_menu(a)    
-                        self.scroll_view.subviews[o].add_subview(a)
-                    except IndexError:
-                        return console.alert("Fatal Error")
+                        ui.animate(self.animation_off, animation_length)  
+                        if not self.offline_mode:
+                            contents_d = self.nas.get_file_list(path, additional=['size', 'time'], sort_by=self.order) 
+                            contents = contents_d['data']['files']
+                
+                        else:
+                            button_metadata = []
+                            f_ids = []
+                            
+                            
+                            for item in self.offline_files.get_content(path[1:], self.offline_files.files):
+                                if item:
+                                    c_data = (False, item) if type(item) == str else (True, list(item)[0])
+                                    button_metadata.append([borders, file_colour, lambda _: self.render_view, h*1/8, c_data[1], ico(c_data[1].split('.')[-1].lower(), c_data[0]), file_colour, f'{path}/{c_data[1]}', c_data[0]])
+                                    f_ids.append(1 if c_data[0] else int(str(c_data[1]).split('-')[0]))
+                            
+                    except AttributeError:
+                        self.exit()
+                    except KeyError:
+                        try:
+                            error_code = contents_d['error']['code']
+                            console.hud_alert(errors[error_code], 'error')
                         
-                i = len(self.scroll_view.subviews)
-                er = i%self.fpr 
-                r = round(i/self.fpr+er)-(int(not bool(er)))
-                
-                
-                self.scroll_view.content_size = (w/self.fpr, (default_height*r)+(((f_pos-default_height)+extra)*r)+f_pos)
-                self.name = path
-                
-                ui.animate(self.animation_off_ld, animation_length-.1)
-                ui.animate(self.animation_on, animation_length)
-                
-                if not self.scroll_view.subviews:
-                    self.scroll_view.add_subview(ui.Label(text='No files', x=self.center[0]*0.9, y=self.center[1]*0.6, alignment=ui.ALIGN_LEFT, font=font, text_color='#bcbcbc'))
+                        except KeyError:
+                            return console.hud_alert(errors[119], 'error')
+    
+                        else:
+                            return self.render_view(os.path.dirname(self.name))
+                    except ConnectionError:
+                        return console.hud_alert(f"Timed out connection, this prompt will continue until you shutdown the script.", 'error')
                     
-                self.bnts = []
-                
-            except ConnectionError:
-                console.hud_alert(f"Timed out connection", 'error', 3.5)
-                self.close()
-                
-            finally:
-                self.load_buffer = False
-                
-                ui.animate(self.animation_off_ld, animation_length-.1)
-                ui.animate(self.animation_on, animation_length)
-                
-        elif sender.image.name.split('.')[-1] in unicode_file+special_extensions+photo_extensions:
-            if not self.offline_mode:
-                f_data = self.nas.get_file_info(f'{self.name}/{sender.title}', additional=['time', 'size'])['data']['files'][0]['additional']
-                f_id = int(f_data['time']['crtime']+f_data['size']) 
-            else:
-                f_id = sender.title.split('-')[0]
+                    button_metadata = ([borders, file_colour, lambda _: self.render_view, h*1/8, item['name'], ico(item['name'].split('.')[-1].lower(), item['isdir']), file_colour, item['path']] for item in contents) if not button_metadata else button_metadata
+                    
+                    file_id_list = f_ids if self.offline_mode else [id_stamp['additional']['time']['crtime']+id_stamp['additional']['size'] for id_stamp in contents]
+                    buttons = make_buttons(button_metadata, self.file_display_formula, self.scroll_view)
+                    dir_status = {}
+                    
+                    for item in button_metadata if self.offline_mode else contents:
+                        dir_status[item[4] if self.offline_mode else item['name']] = item[8] if self.offline_mode else item['isdir']
+    
+                    for ind, bnt in enumerate(buttons):
+                        folder = str(bnt.image.name).endswith('folder.png')
+                        id_ = file_id_list[ind]
+                        borders = 1 if debug else 0
+                    
+                        file_label_position_y = 167+6
+                        file_label_position_x = (25 if folder else 35)
+                    
+                        file_lable = ui.Label(height=20, flex=flex, text=bnt.title, text_color=file_colour, border_width=borders, font=font)
+                            
+                        bnts += 1
+                        bnt.add_subview(file_lable)
+                        
+                        file_lable.x = file_label_position_x
+                        file_lable.y = file_label_position_y+10
+                        file_lable.width = 160-file_lable.x
+                        
+                        cache_check = ui.ImageView(image=assets['cache' if self.cache.id_in_list(id_) else 'cache_nf'], height=20, width=25, x=file_label_position_x-26, y=file_label_position_y+10, border_width=borders)  
+                        
+                        if (not folder and not self.offline_mode) and file_info: 
+                            unix_stamp = int(contents[ind]['additional']['time']['crtime'])
             
-            self.open_file(sender, True, f_id)
+                            size_lable = ui.Label(height=15, flex=flex, text=s(contents[ind]['additional']['size'], system=alternative), text_color=file_info_color, border_width=borders, font=font_fi)
+                            time_lable = ui.Label(height=15, flex=flex, text=str(datetime.fromtimestamp(unix_stamp))[:10], text_color=file_info_color, border_width=borders, font=font_fi)
+                            
+                            size_lable.x = file_label_position_x
+                            time_lable.y = size_lable.y = file_label_position_y+25
+                            size_lable.width = 44 
+                            
+                            time_lable.x = file_label_position_x+45
+                            time_lable.width = 80
+                            
+                            cache_check.y = file_label_position_y+13
+                            file_lable.y = file_label_position_y+3
+                            
+                            bnt.add_subview(size_lable)
+                            bnt.add_subview(time_lable)
+                    
+                        bnt.add_subview(cache_check)
+                        self.scroll_view.add_subview(bnt)
+                    
+                    for o in range(bnts):
+                        try:
+                            subview = self.scroll_view.subviews[o]
+                            is_folder = subview.image.name.endswith('folder.png')
+                            
+                            gestures.long_press(subview, lambda data: self.context_menu(file=not is_folder, **{
+                                'is_folder': not is_folder, 
+                                'path': str(data.view.name),
+                                'data': data},
+                            ), minimum_press_duration=0.5)
+                            gestures.drag(subview, subview.name) if not is_folder else None
+                            
+                        except IndexError:
+                            return console.alert("Fatal Error")
+                            
+                          
+                    i = len(self.scroll_view.subviews)
+                    er = i%self.fpr 
+                    r = round(i/self.fpr+er)+1
+                    
+                    
+                    self.scroll_view.content_size = (w/self.fpr, (default_height*r)+(((f_pos-default_height)+extra)*r)+f_pos)
+                    self.name = path
+                    
+                    ui.animate(self.animation_off_ld, animation_length-.1)
+                    ui.animate(self.animation_on, animation_length)
+                    
+                    if not self.scroll_view.subviews:
+                        self.scroll_view.add_subview(ui.Label(text='No files', x=self.center[0]*0.9, y=self.center[1]*0.6, alignment=ui.ALIGN_LEFT, font=font, text_color='#bcbcbc'))
+                    
+                finally:
+                    self.left_button_items[0].enabled = True
+                    self.load_buffer = False
+            
+                    ui.animate(self.animation_on, animation_length)
+                    
+            elif sender.image.name.split('.')[-1] in unicode_file+special_extensions+photo_extensions+audio_extensions+video_extensions:
+                try:
+                    sender.enabled = False
+                    if not self.offline_mode:
+                        f_data = self.nas.get_file_info(f'{self.name}/{sender.title}', additional=['time', 'size'])['data']['files'][0]['additional']
+                        f_id = int(f_data['time']['crtime']+f_data['size']) 
+                    else:
+                        f_id = sender.title.split('-')[0]
+                
+                    self.open_file(file=True, **{
+                        'id': f_id,
+                        'path': f'{self.name}/{sender.title}'
+                    })
+                finally:
+                    sender.enabled = True
+                
             
     
     def go_back(self):
@@ -571,7 +646,7 @@ class SInteractivePanel(ui.View):
             self.last_folder = self.name
             self.render_view(path)
         
-    def estimate_download(self, sender_data) -> int:
+    def estimate_download(self, file) -> int:
         x_old = 0
         data = []
         time = int(interval/5)
@@ -579,31 +654,29 @@ class SInteractivePanel(ui.View):
         for y in range(time):
             sleep(1)
             
-            x: int = int(os.stat(f'./output/{sender_data.name}').st_size)
+            x: int = int(os.stat(f'./output/{os.path.basename(file)}').st_size)
             bytes: int = x-x_old
             data.append(bytes)
             x_old = x
         
-        return averg(data)
+        return max(set(data), key=data.count)
             
-    def check_download_status(self, sender) -> None:
-        self.nas.start_dir_size_calc(f'{self.name}/{sender.name}')
-        
-        size: int = int(self.nas.get_dir_status()['data']['total_size'])
+    def check_download_status(self, file) -> None:
+        size: int = int(self.nas.get_file_info(file, additional=['size'])['data']['files'][0]['additional']['size'])
         current_size = scnd_counter = start = counter = 0
         estimate = None
         
         while round(current_size*100) != 100:
             sleep(0.1)
             if scnd_counter % int(interval) == 0:
-                estimate = self.estimate_download(sender)
+                estimate = self.estimate_download(file)
                 scnd_counter += 1
                 counter = 0
 
  
             elif counter == 10:
                 try:
-                    downloaded: int = int(os.stat(f'./output/{str(sender.name).split("/")[-1]}').st_size)
+                    downloaded: int = int(os.stat(f'./output/{os.path.basename(file)}').st_size)
                     bytes: int = estimate or int(downloaded-start)
                     data_per_second: str = s(bytes, system=verbose)
 
@@ -622,55 +695,55 @@ class SInteractivePanel(ui.View):
                 counter += 1
         
         self.download = False
-        console.alert(f'Finished Download') 
+        console.hud_alert(f'Finished Download') 
     
-    @ui.in_background
-    def context_menu(self, sender):
-        if not self.photoview and not self.offline_mode:
-            items = ['Download', 'Delete', 'Rename', 'Open', 'Info', 'Copy', 'Download Status' if self.download else ''] if not sender.title == 'True' else ['Delete', 'Rename', 'Open', 'Info', 'Paste' if self.copied else '']
-            option = dialogs.list_dialog(title=sender.name, items=items)
+    def get_id(self, path: str):
+        id_data = self.nas.get_file_info(path, additional=['size', 'time'])['data']['files'][0]['additional']
+        return id_data['size']+id_data['time']['crtime']
         
+    @ui.in_background
+    def context_menu(self,**kwargs):
+        
+        if kwargs['data'].state != 1:
+            return
             
+        is_folder = kwargs['is_folder'] 
+        path = kwargs['path'] if kwargs['path'] else self.name
+    
+        UIImpactFeedbackGenerator.impactOccurred()
+        
+        if not self.photoview and not self.offline_mode:
+            items = ['Download', 'Delete', 'Rename', 'Open', 'Copy', 'Download Status' if self.download else ''] if is_folder is False else (['Delete', 'Rename', 'Open', 'Paste'] if is_folder else ['Paste'])
+            option = show_list_dialog(items, f'{os.path.basename(path)} Options')
+            
+        
             if option == 'Delete':
-                self.delete_file(sender)
+                self.delete_file(path)
             elif option == 'Rename':
-                self.rename_file(sender)
+                self.rename_file(path)
             elif option == 'Download':
-                self.download_file(sender)
+                self.download_file(path)
             elif option == 'Open':
-                self.open_file(sender)
-            elif option == 'Info':
-                self.get_infomation(sender)
+                self.open_file(file=(not is_folder), **{
+                    'id': None if is_folder else self.get_id(kwargs['path']), 
+                    'path': path
+                })
             elif option == 'Copy':
-                self.copy_file(sender)
+                self.copied.append(path)
             elif option == 'Paste':
-                self.paste_item(sender)
+                self.paste_item(path)
             elif option == 'Download Status':
-                self.display_download_status(sender)
+                console.alert(self.download) 
         elif self.offline_mode:
             console.alert('Cannot use item actions when in offline mode.')
-            
-                
-                
-    @ui.in_background
-    def display_download_status(self, *args):
-        console.alert(self.download) 
                    
-    def paste_item(self, sender):
-        self.nas.start_copy_move(self.copied, f'{self.name}/{sender.name}')
-        console.hud_alert(f'Copied {len(self.copied)} items to "{self.name}/{sender.name}"', duration=1.0)
- 
-    def copy_file(self, sender):
-        self.copied.append(f'{self.name}/{sender.name}')
-        
-    def get_infomation(self, sender):
-        try:
-            self.nas.start_dir_size_calc(f'{self.name}/{sender.name}')
-            filesize = self.nas.get_dir_status()['data']['total_size']
-            console.alert(f'{sender.name}\n{s(filesize, system=verbose)}\n{self.name}/{sender.name}')
-        except Exception as e:
-            console.alert(e)
-            
+    def paste_item(self, path):
+        if self.copied:
+            try:
+                self.nas.start_copy_move(self.copied, path)
+                console.alert(f'Copied {len(self.copied)} item(s) to "{path}"')
+            except filestation.UploadError:
+                console.alert('A file that was being pasted already existed at this location.')
     
     def display_central_text(self):
         off = self.off
@@ -679,37 +752,42 @@ class SInteractivePanel(ui.View):
         ui.animate(self.animation_off if off else self.animation_on, animation_length)
         ui.animate(self.animation_off_ld if not off else self.animation_on_ld, animation_length)
         
-    def rename_file(self, sender_data):
+    def rename_file(self, file):
         name = str(console.input_alert('Please chose new name.'))
-        
-        self.nas.rename_folder(f'{self.name}/{sender_data.name}', name)
+        self.nas.rename_folder(file, name)
     
         self.render_view(self.name)
         
     @ui.in_background    
-    def delete_file(self, sender_data):
-        console.hud_alert(f'Deleted "{sender_data.name}"')
-        self.nas.start_delete_task(f'{self.name}/{sender_data.name}')
+    def delete_file(self, file):
+        console.hud_alert(f'Deleted "{file}"')
+        self.nas.start_delete_task(file)
         
         self.render_view(self.name)
     
-    def download_file(self, sender_data):
-        path = f'{self.name}/{sender_data.name}'
-        Thread(target=self.nas.get_file, args=(path,), name='a').start()
-        console.hud_alert(f'Downloading "{sender_data.name}"')
-        Thread(target=self.check_download_status, args=(sender_data,), name='b').start()
+    def download_file(self, file):
+        Thread(target=self.nas.get_file, args=(file,), name='a').start()
+        console.hud_alert(f'Downloading "{file}"')
+        Thread(target=self.check_download_status, args=(file,), name='b').start()
     
     def get_key_commands(self):
-        return [{'input': 'q'}, {'input': 'e'}, {'input': 't', 'modifiers': 'cmd'}]
+        return [{'input': 'q'}, {'input': 'e'}, {'input': 't', 'modifiers': 'cmd'}, {'input': 'g', 'modifiers': 'cmd'}, {'input': 'v', 'modifiers': 'cmd'}, {'input': 'n', 'modifiers': 'cmd'}]
     
     def key_command(self, sender):
-        
         if sender['input'] == 'q':
             self.go_back()
         elif sender['input'] == 'e' and self.last_folder:
             self.render_view(self.last_folder)
         elif sender['input'] == 't' and sender['modifiers'] == 'cmd':
             self.nas_console()
+        elif sender['input'] == 'g' and sender['modifiers'] == 'cmd':
+            path = console.input_alert('What path do you want to go to?', '')
+            self.render_view(path) if path else None
+        elif sender['input'] == 'v' and sender['modifiers'] == 'cmd':
+            self.paste_item(self.name)
+        elif sender['input'] == 'n' and sender['modifiers'] == 'cmd':
+            self.make_media()
+        
     
     def import_foreign_media(self):
         if self.offline_mode:
@@ -752,7 +830,7 @@ class SInteractivePanel(ui.View):
         self.render_view(path)  
         
     @ui.in_background
-    def open_file(self, sender_data, file=None, id: int=None):
+    def open_file(self, file=None, **kwargs):
         
         def download_progress(file, ori_size):
             while (os.stat(file).st_size/ori_size)*100 < 100:
@@ -765,11 +843,12 @@ class SInteractivePanel(ui.View):
         except FileExistsError:
             pass
         finally:
-                
-            true_path = f'{self.name}/{sender_data.name}' if not file else sender_data.name
-            true_name = sender_data.name if not file else sender_data.title
             
-            if sender_data.title == 'False' or file:
+            id = kwargs['id']
+            true_path = kwargs['path'] 
+            true_name = os.path.basename(true_path) 
+            
+            if file:
                  
                 file_extension = true_name.split('.')[-1].lower() 
                 
@@ -816,12 +895,12 @@ class SInteractivePanel(ui.View):
                     
             else:
                 files = self.nas.get_file_list(true_path)['data']['files']
-                get_files = lambda: (file['name'] for file in files if not file['isdir'] and str(file['name'].split('.')[-1]).lower() in photo_extensions)
+                get_files = lambda: (file['name'] for file in files if not file['isdir'] and str(file['name'].split('.')[-1]).lower() in photo_extensions+audio_extensions+video_extensions)
                 
                 self._files = get_files()
                 
                 c = [item for item in get_files()]
-                self._s_dir = sender_data.name
+                self._s_dir = true_name
                 
                 if bool(c):
                     
@@ -837,21 +916,22 @@ class ImgViewMain(ui.View):
         self.frame = (0, 0, 500, 500)
         self.name = s._s_dir
         self.s = s
-        
+    
         tb = ui.TableView(flex='wh', frame=self.frame)
         tb.data_source = tb.delegate = ImgViewDelegate(sip=s)
         tb.bg_color = background_color
         tb.separator_color = file_colour
         
-    
         self.add_subview(tb)   
-
+    
 class ImgViewDelegate(ui.ListDataSource):
-        
+    
+   
     def __init__(self, sip: SInteractivePanel):
+        all_extensions = photo_extensions+audio_extensions+video_extensions
                 
         self.sip = sip
-        self.files = [file for file in sip._files if str(file).split('.')[-1].lower() in photo_extensions]
+        self.files = [file for file in sip._files if str(file).split('.')[-1].lower() in all_extensions]
         self.added_files = []
         self.cache_name = {}
         self.threads_finished = 0
@@ -859,7 +939,7 @@ class ImgViewDelegate(ui.ListDataSource):
         ui.ListDataSource.__init__(self, self.files)
         files_id_fetch = sip.nas.get_file_list(f'{sip.name}/{sip._s_dir}', additional=['time', 'size'])['data']['files']
         
-        ids = {item_sctr['name']: int(item_sctr['additional']['time']['crtime']+item_sctr['additional']['size']) for item_sctr in files_id_fetch if item_sctr['name'].split('.')[-1].lower() in photo_extensions}
+        ids = {item_sctr['name']: int(item_sctr['additional']['time']['crtime']+item_sctr['additional']['size']) for item_sctr in files_id_fetch if item_sctr['name'].split('.')[-1].lower() in all_extensions}
         
         file_cache = open(offline_contents, 'r+' if os.path.isfile(offline_contents) else "w+", encoding='utf-8')
         
@@ -901,7 +981,7 @@ class ImgViewDelegate(ui.ListDataSource):
         if not os.path.isdir(cache_folder):
             os.mkdir(cache_folder)
         
-        download_urls = [(sip.nas.get_download_url(f"{sip.name}/{sip._s_dir}/{name}"), name, ids[name]) for name in ids.keys() if int(ids[name]) not in sip.cache.get_all_ids() and name.split('.')[-1].lower() in photo_extensions]
+        download_urls = [(sip.nas.get_download_url(f"{sip.name}/{sip._s_dir}/{name}"), name, ids[name]) for name in ids.keys() if int(ids[name]) not in sip.cache.get_all_ids() and name.split('.')[-1].lower() in all_extensions]
         
         self.added_files = [file for file in ids.keys() if ids[file] in sip.cache.get_all_ids()]
         self.cache_name = {file: f"{ids[file]}-{file}" for file in ids.keys() if ids[file] in sip.cache.get_all_ids()}
@@ -938,7 +1018,7 @@ class ImgViewDelegate(ui.ListDataSource):
             console.quicklook(folder_contents)
         else:
             print('This image has not downloaded yet.')
-    
+            
 if __name__ == '__main__':
     View = SInteractivePanel() # Make an instance of the main script
     
