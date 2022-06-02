@@ -78,7 +78,6 @@ import objc_util
 import photos
 import shutil
 import json
-import scene
 
 from datetime import datetime
 from math import floor
@@ -87,6 +86,7 @@ from threading import Thread
 from sys import argv, exit
 from time import sleep
 from concurrent.futures import ThreadPoolExecutor
+from math import pi
 
 try:
     import config
@@ -98,7 +98,9 @@ try:
     from external import occ, gestures
     
 except ModuleNotFoundError as e:
+    print(e)
     print(f'"config", "nas", "hurry" or "occ" module not found.\n\nActual Error: {e}'); exit(1)
+
 
 cfg = config.Config('sip-config.cfg')
 w, h = ui.get_screen_size()
@@ -175,16 +177,16 @@ font = (cfg['font'], cfg['font_size'])
 font_fi = (cfg['font'], cfg['font_size_fi'])
 
 if auto_mode:
-    offset = 16 if str(UIDeviceCurrent.model()) == 'iPad' else 50
+    offset = 11 if str(UIDeviceCurrent.model()) == 'iPad' else 50
     scale = 3
-    spacing = 50
+    spacing = 80
     files_per_row = 6
 
-frame_val = 1020 # Default 1020
-extra = 40 # Default: 40
-f_pos = 200 # Default 200
+frame_val = 880 # Default 880
+extra = 50 # Default: 50
+f_pos = 150 # Default 150
 
-assets = {os.path.splitext(file)[0]: ui.Image.named(f'{asset_location}/{file}') for file in os.listdir(asset_location) if os.path.splitext(file)[-1]=='.png'}
+assets = {os.path.splitext(file)[0]: ui.Image.named(f'{asset_location}/{file}') for file in os.listdir(asset_location) if os.path.splitext(file)[-1].lower()=='.png'}
 
 audio_extensions = ['ogg', 'mp3', 'flac', 'alac', 'wav']
 video_extensions = ['mov', 'mp4', 'mkv']
@@ -217,7 +219,7 @@ def make_buttons(*args):
             
         elif args[1]:
             divisor = 0+(1 if fpr <= 3 else (2*(fpr-3)))
-            x = (old_dim[2]+old_dim[0]+spacing/divisor) 
+            x = (old_dim[0]+old_dim[2]+(spacing/divisor)+15) 
         
         item.border_width = int(element[0])
         item.border_color = element[1]
@@ -237,6 +239,7 @@ def make_buttons(*args):
 
 offline_contents = 'occ.json'
 cache_folder = 'ImgView'
+folder_img = 'folder_p.png'
 default_tb_args = {'frame': (0,0,400,400), 'separator_color': file_colour, 'bg_color': background_color}
 
 def show_list_dialog(items: list, title_name: str, header: str=None):
@@ -298,7 +301,8 @@ class CacheHandler:
     def get_file_from_id(self, id: int) -> str:
         self._update_id_list(); return self.ids[int(id)] if self.id_in_list(int(id)) else 0
     
-    def check_files(self, cache_file):
+    @staticmethod
+    def check_files():
         try:
             file_ids = []
             for file in os.listdir(f'./{cache_folder}'):
@@ -308,12 +312,13 @@ class CacheHandler:
                     file_ids.append(str(file).split('-')[0])
             
             if file_ids:
-                cache_file.change_cache_index(mode='rm', ids=file_ids)
+                occ.OfflineCacheContructor.change_cache_index(offline_contents, mode='rm', ids=file_ids)
                 
         except FileNotFoundError:
             os.mkdir(cache_folder)
     
-    def clear_cache(self):
+    @staticmethod
+    def clear_cache():
         shutil.rmtree(f'./{cache_folder}')
         os.mkdir(cache_folder)
 
@@ -337,22 +342,31 @@ class SInteractivePanel(ui.View):
         self.bnts = []
         self.copied = []
         self.item = self.nas = self.last_folder = None
-        self.off = self.photoview = self.load_buffer = self.is_pointing = self.download = False
-        
-        self.file_display_formula = (frame_val*1/offset, spacing, frame_val/(scale*2), frame_val/(scale*2)+extra, self.fpr)
+        self.has_loaded = self.off = self.photoview = self.load_buffer = self.download = False    
         
         # Define the scrollable area, only done on initialisation, when going through folders, it's done in render_view
                 
         self.scroll_view.frame = self.frame
         self.scroll_view.content_size = (w, h)
         self.scroll_view.flex = flex
+
+        self.file_display_formula = (frame_val*1/offset, spacing, frame_val/(scale*2), frame_val/(scale*2)+extra, self.fpr)
         
         self.order = 'name'
-        self.left_button_items = [ui.ButtonItem(image=ui.Image.named('iob:chevron_left_32'), tint_color=file_colour, action=lambda _: self.go_back(), enabled=True), ui.ButtonItem(image=ui.Image.named('typb:Spanner'), tint_color=file_colour, action=lambda _: self.nas_console(), enabled=True), ui.ButtonItem(image=ui.Image.named('iob:grid_256'), tint_color=file_colour, action=lambda _: self.change_order(), enabled=True)]
-        self.right_button_items = [ui.ButtonItem(image=ui.Image.named('typb:Write'), tint_color=file_colour, action=lambda _: self.make_media(), enabled=True), ui.ButtonItem(image=ui.Image.named('typb:Archive'), tint_color=file_colour, action=lambda _: self.import_foreign_media(), enabled=True)]
-        self.add_subview(self.scroll_view) # Display the files in the root
-
         
+        self.left_button_items = [ui.ButtonItem(image=ui.Image.named('iob:chevron_left_32'), tint_color=file_colour, action=lambda _: self.go_back()), ui.ButtonItem(image=ui.Image.named('typb:Grid'), tint_color=file_colour, action=lambda _: self.change_order()), ui.ButtonItem(image=ui.Image.named('typb:Refresh'), tint_color=file_colour, action=lambda _: self.reload_full())]
+        
+        self.right_button_items = [ui.ButtonItem(image=ui.Image.named('typb:Write'), tint_color=file_colour, action=lambda _: self.make_media()), ui.ButtonItem(image=ui.Image.named('typb:Archive'), tint_color=file_colour, action=lambda _: self.import_foreign_media())]
+        
+        self.add_subview(self.scroll_view) # Display the files in the root
+        gestures.tap(self, lambda *_: self.exit(), 1,2)
+        
+        self.render_view(root)
+    
+    def reload_full(self):
+        self.layout()
+        self.render_view(self.name)
+            
     def get_name(self):
         return self.name
         
@@ -365,10 +379,14 @@ class SInteractivePanel(ui.View):
                 console.alert(f'File: "{args[0]}" already exists at this location.')
                  
     def layout(self):
-        self.fpr = floor((self.width-spacing)/(frame_val/(scale*2)))
+        
+        orientation = UIDevice.currentDevice().orientation()
+        offset = 20 if orientation != 3 else 10
+        
+        self.fpr = floor((self.width-spacing)/(frame_val/(scale*2)+15))
         self.file_display_formula = (frame_val*1/offset, spacing, frame_val/(scale*2), frame_val/(scale*2)+extra, self.fpr)
         
-        self.render_view(self.name)
+            
     
     def change_order(self):
         nas_order = {'File Owner': 'user', 'File Group': 'group', 'File Size': 'size', 'File Name': 'name', 'Creation Time': 'crtime', 'Last Modified': 'mtime', 'Last Accessed': 'atime', 'Last Change': 'ctime', 'POSIX Permissions': 'posix'}
@@ -386,7 +404,9 @@ class SInteractivePanel(ui.View):
             os.mkdir(cache_folder)
             
             print('Cleared ImageView Cache')
-                
+        elif command == 'reload':
+            self.render_view(self.name)
+            
     def make_media(self):
         if self.offline_mode:
             return console.alert("Cannot make media while in offline mode.")
@@ -428,13 +448,14 @@ class SInteractivePanel(ui.View):
             
     def connect(self):
         try:
-    
+            
+            
             self.offline_mode = False
             
             self.cache = CacheHandler()
+            self.cache.check_files()
             self.offline_files = occ.OfflineCacheConstructor(offline_contents, self.cache)
             self.offline_files.build_offline_structure()
-            self.cache.check_files(self.offline_files)
             
             self.nas = filestation.FileStation(url, port, user, passw, secure=True, debug=debug)
             
@@ -449,7 +470,8 @@ class SInteractivePanel(ui.View):
             'is_folder': None
             }))
             
-            self.render_view(root)
+            gestures.swipe(self.scroll_view, lambda *a: self.go_back(), gestures.LEFT)
+            
         except AuthenticationError:
             console.alert('Invalid username / password')
             self.exit()
@@ -463,8 +485,6 @@ class SInteractivePanel(ui.View):
                     
                     if not self.offline_files.files:
                         raise FileNotFoundError('No cache')
-                        
-                    self.render_view(root)
     
                 except FileNotFoundError:
                     console.alert("Offline Cache is empty.")
@@ -481,16 +501,22 @@ class SInteractivePanel(ui.View):
     def animation_on(self):
         for x in range(0, 10):
             self.scroll_view.alpha = round(x/10)
-            
-    def animation_off(self):
+      
+    def animation_off_without_transform(self):
         for x in range(10, 0, -1):
-            self.scroll_view.alpha = round(x/10)  
-                
+            self.scroll_view.alpha = round(x/10)
+       
+
+    def animation_off(self):
+        self.scroll_view.transform = ui.Transform.scale(0.85, 0.85)
+        self.button_tapped.transform = ui.Transform.scale(100.0, 100.0)
+ 
+        
     @ui.in_background
     def render_view(self, sender):
         sender = sender if sender != '/' else root
         if not self.load_buffer:
-            if not self.photoview and (isinstance(sender, ui.Button) and sender.image.name.endswith('folder.png')) or isinstance(sender, str) :
+            if not self.photoview and (isinstance(sender, ui.Button) and sender.image.name.endswith(folder_img)) or isinstance(sender, str):
                 bnts = 0
                 try:
                     self.load_buffer = True
@@ -500,11 +526,19 @@ class SInteractivePanel(ui.View):
                     path = sender.name if isinstance(sender, ui.Button) else sender
                     
                     borders = 1 if debug else 0
-                    ico = lambda nm, is_f: assets['folder'] if is_f else (assets['file'] if nm in unicode_file else (assets['photo'] if nm in photo_extensions else (assets['video'] if nm in video_extensions else (assets['audio'] if nm in audio_extensions else assets['file']))))
+                    ico = lambda nm, is_f: assets['folder_p'] if is_f else (assets['file'] if nm in unicode_file else (assets['photo'] if nm in photo_extensions else (assets['video'] if nm in video_extensions else (assets['audio'] if nm in audio_extensions else assets['file']))))
                     
                     
                     try:
-                        ui.animate(self.animation_off, animation_length)  
+                        if isinstance(sender, str):
+                            ui.animate(self.animation_off_without_transform, animation_length)
+                        else:
+                            self.button_tapped = sender
+                            
+                            ui.animate(self.animation_off_without_transform, animation_length-0.1)
+                            self.button_tapped.transform = ui.Transform.scale(1, 1)
+                            ui.animate(self.animation_off, animation_length+0.5)                 
+                            
                         if not self.offline_mode:
                             contents_d = self.nas.get_file_list(path, additional=['size', 'time'], sort_by=self.order) 
                             contents = contents_d['data']['files']
@@ -512,7 +546,6 @@ class SInteractivePanel(ui.View):
                         else:
                             button_metadata = []
                             f_ids = []
-                            
                             
                             for item in self.offline_files.get_content(path[1:], self.offline_files.files):
                                 if item:
@@ -535,8 +568,11 @@ class SInteractivePanel(ui.View):
                     except ConnectionError:
                         return console.hud_alert(f"Timed out connection, this prompt will continue until you shutdown the script.", 'error')
                     
-                    button_metadata = ([borders, file_colour, lambda _: self.render_view, h*1/8, item['name'], ico(item['name'].split('.')[-1].lower(), item['isdir']), file_colour, item['path']] for item in contents) if not button_metadata else button_metadata
-                    
+                    try:
+                        button_metadata = ([borders, file_colour, lambda _: self.render_view, h*1/8, item['name'], ico(item['name'].split('.')[-1].lower(), item['isdir']), file_colour, item['path']] for item in contents) if not button_metadata else button_metadata
+                    except UnboundLocalError:
+                        return
+                        
                     file_id_list = f_ids if self.offline_mode else [id_stamp['additional']['time']['crtime']+id_stamp['additional']['size'] for id_stamp in contents]
                     buttons = make_buttons(button_metadata, self.file_display_formula, self.scroll_view)
                     dir_status = {}
@@ -545,13 +581,14 @@ class SInteractivePanel(ui.View):
                         dir_status[item[4] if self.offline_mode else item['name']] = item[8] if self.offline_mode else item['isdir']
     
                     for ind, bnt in enumerate(buttons):
-                        folder = str(bnt.image.name).endswith('folder.png')
+                        
+                        folder = str(bnt.image.name).endswith(folder_img)
                         id_ = file_id_list[ind]
                         borders = 1 if debug else 0
                     
-                        file_label_position_y = 167+6
+                        file_label_position_y = 145
                         file_label_position_x = (25 if folder else 35)
-                    
+                        
                         file_lable = ui.Label(height=20, flex=flex, text=bnt.title, text_color=file_colour, border_width=borders, font=font)
                             
                         bnts += 1
@@ -588,14 +625,27 @@ class SInteractivePanel(ui.View):
                     for o in range(bnts):
                         try:
                             subview = self.scroll_view.subviews[o]
-                            is_folder = subview.image.name.endswith('folder.png')
+                            is_folder = subview.image.name.endswith(folder_img)
                             
-                            gestures.long_press(subview, lambda data: self.context_menu(file=not is_folder, **{
-                                'is_folder': not is_folder, 
+                            gestures.long_press(subview, lambda data: self.context_menu(**{
+                                'is_folder': is_folder, 
                                 'path': str(data.view.name),
                                 'data': data},
+                                
                             ), minimum_press_duration=0.5)
-                            gestures.drag(subview, subview.name) if not is_folder else None
+                            
+                            gestures.drag(
+                                subview, 
+                                subview.name
+                            ) if not is_folder else None
+                            
+                            def pointerInteraction_styleForRegion_(_self, _cmd, _interaction, _region):
+                                return
+                           
+                            gestures.UIPointer(subview, {
+                                "pointerInteraction_willEnterRegion_animator_": subview, 
+                                "pointerInteraction_willExitRegion_animator_": subview
+                            })
                             
                         except IndexError:
                             return console.alert("Fatal Error")
@@ -605,21 +655,21 @@ class SInteractivePanel(ui.View):
                     er = i%self.fpr 
                     r = round(i/self.fpr+er)+1
                     
-                    
                     self.scroll_view.content_size = (w/self.fpr, (default_height*r)+(((f_pos-default_height)+extra)*r)+f_pos)
                     self.name = path
-                    
-                    ui.animate(self.animation_off_ld, animation_length-.1)
-                    ui.animate(self.animation_on, animation_length)
                     
                     if not self.scroll_view.subviews:
                         self.scroll_view.add_subview(ui.Label(text='No files', x=self.center[0]*0.9, y=self.center[1]*0.6, alignment=ui.ALIGN_LEFT, font=font, text_color='#bcbcbc'))
                     
                 finally:
-                    self.left_button_items[0].enabled = True
                     self.load_buffer = False
-            
+                    self.left_button_items[0].enabled = True
+                    
                     ui.animate(self.animation_on, animation_length)
+                    
+                    ui.animate(lambda: setattr(self.scroll_view, 'transform', ui.Transform.scale(0.91, 0.91)), animation_length+0.1)
+                    ui.animate(lambda: setattr(self.scroll_view, 'transform', ui.Transform.scale(0.95, 0.95)), animation_length)
+                    ui.animate(lambda: setattr(self.scroll_view, 'transform', ui.Transform.scale(1, 1)), animation_length+0.5)
                     
             elif sender.image.name.split('.')[-1] in unicode_file+special_extensions+photo_extensions+audio_extensions+video_extensions:
                 try:
@@ -714,7 +764,7 @@ class SInteractivePanel(ui.View):
         
         if not self.photoview and not self.offline_mode:
             items = ['Download', 'Delete', 'Rename', 'Open', 'Copy', 'Download Status' if self.download else ''] if is_folder is False else (['Delete', 'Rename', 'Open', 'Paste'] if is_folder else ['Paste'])
-            option = show_list_dialog(items, f'{os.path.basename(path)} Options')
+            option = show_list_dialog(items, f'"{os.path.basename(path)}" Options')
             
         
             if option == 'Delete':
@@ -724,7 +774,7 @@ class SInteractivePanel(ui.View):
             elif option == 'Download':
                 self.download_file(path)
             elif option == 'Open':
-                self.open_file(file=(not is_folder), **{
+                self.open_file(folder=is_folder, **{
                     'id': None if is_folder else self.get_id(kwargs['path']), 
                     'path': path
                 })
@@ -877,7 +927,7 @@ class SInteractivePanel(ui.View):
                                 self.nas.get_file(true_path, in_root=True)
                             except requests.exceptions.ChunkedEncodingError:
                                 return console.alert("Lost connection, did you shutdown your device while media was downloading?")
-                            self.offline_files.change_cache_index('ap', [id], [[str(self.name)[1:], f"{id}-{true_name}"]])
+                            occ.OfflineCacheConstructor.change_cache_index(offline_contents, 'ap', [id], [[str(self.name)[1:], f"{id}-{true_name}"]])
                         else:
                             true_name = f"./{cache_folder}/{true_name}"
                             
@@ -895,7 +945,7 @@ class SInteractivePanel(ui.View):
                     
             else:
                 files = self.nas.get_file_list(true_path)['data']['files']
-                get_files = lambda: (file['name'] for file in files if not file['isdir'] and str(file['name'].split('.')[-1]).lower() in photo_extensions+audio_extensions+video_extensions)
+                get_files = lambda: (file['name'] for file in files if not file['isdir'] and str(file['name'].split('.')[-1]).lower() in photo_extensions+audio_extensions+video_extensions+special_extensions)
                 
                 self._files = get_files()
                 
@@ -905,10 +955,12 @@ class SInteractivePanel(ui.View):
                 if bool(c):
                     
                     self.img_view = ImgViewMain(self)
-                    self.img_view.present('panel', title_bar_color=title_bar_color, title_color=file_colour, hide_close_button=True)
+                    self.img_view.present('fullscreen', title_bar_color=title_bar_color, title_color=file_colour, hide_close_button=True)
                       
                 else:
                     self.render_view(true_path)
+    
+    
 
 
 class ImgViewMain(ui.View):
@@ -921,6 +973,8 @@ class ImgViewMain(ui.View):
         tb.data_source = tb.delegate = ImgViewDelegate(sip=s)
         tb.bg_color = background_color
         tb.separator_color = file_colour
+    
+        gestures.tap(self, lambda *a: self.close(), 1,2)
         
         self.add_subview(tb)   
     
@@ -1023,4 +1077,4 @@ if __name__ == '__main__':
     View = SInteractivePanel() # Make an instance of the main script
     
     View.connect() # Establish connection to NAS
-    View.present('panel', hide_close_button=True, title_bar_color=title_bar_color, title_color=file_colour) # Display initialised screen content
+    View.present('fullscreen', hide_close_button=True, title_bar_color=title_bar_color, title_color=file_colour) # Display initialised screen content
