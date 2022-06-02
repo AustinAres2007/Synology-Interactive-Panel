@@ -184,6 +184,7 @@ import types
 
 import ui
 from objc_util import *
+from math import pi
 
 # Recognizer classes
 
@@ -194,6 +195,7 @@ UIScreenEdgePanGestureRecognizer = ObjCClass('UIScreenEdgePanGestureRecognizer')
 UIPinchGestureRecognizer = ObjCClass('UIPinchGestureRecognizer')
 UIRotationGestureRecognizer = ObjCClass('UIRotationGestureRecognizer')
 UISwipeGestureRecognizer = ObjCClass('UISwipeGestureRecognizer')
+UIPointerInteraction = ObjCClass('UIPointerInteraction')
 
 #  Drag and drop classes
 
@@ -271,6 +273,8 @@ class Data():
             else:
                 value = getattr(self, key)
             result += f'  {key}: {value}'
+  
+        
         return result
 
     def __repr__(self):
@@ -462,13 +466,10 @@ def tap(view, action,
 
 
 @on_main_thread
-def doubletap(view, action, 
-        number_of_touches_required=None):
+def doubletap(view, action, number_of_touches_required=None):
     """ Convenience method that calls `tap` with a 2-tap requirement.
     """
-    return tap(view, action,
-        number_of_taps_required=2,
-        number_of_touches_required=number_of_touches_required)
+    return tap(view, action, number_of_taps_required=2, number_of_touches_required=number_of_touches_required)
 
 @on_main_thread
 def long_press(view, action,
@@ -739,6 +740,7 @@ class UIDragInteractionDelegate(ObjCDelegate):
             
         retain_global(self)
     
+        
     def dragInteraction_itemsForBeginningSession_(_self, _cmd,
     _interaction, _session):
         self = ObjCInstance(_self)
@@ -778,6 +780,7 @@ class UIDropInteractionDelegate(ObjCDelegate):
     
     def __init__(self, view, handler_func, accept, animation_func, onBegin_func):
         
+        #print('eeeee',self)
         if type(accept) is type:
             if accept is str:
                 self.accept_type = NSString
@@ -889,7 +892,38 @@ class UIDropInteractionDelegate(ObjCDelegate):
                         if type_identifier and suggested_name:
                             provider.loadFileRepresentationForTypeIdentifier_completionHandler_(
                                 type_identifier, handler_block)
-                                
+  
+class UIPointerInteractionDelegate(ObjCDelegate):
+    def __init__(self, view, delegate_methods, *args, **kwargs):
+        
+        self.delegate_methods = delegate_methods
+        self.view = view
+        UIPointerInteractionDelegate = UIPointerInteraction.alloc().initWithDelegate(self)
+        view.objc_instance.addInteraction(UIPointerInteractionDelegate) 
+        
+        retain_global(self)
+ 
+    
+    def pointerInteraction_willEnterRegion_animator_(_self, _cmd, _interaction, _region, _animator):
+        self = ObjCInstance(_self)
+        bnt = self.delegate_methods['pointerInteraction_willEnterRegion_animator_']
+        
+        def bnt_change():
+            bnt.transform = ui.Transform.scale(1.025, 1.025).concat(ui.Transform.rotation(pi/48))
+        
+        ui.animate(bnt_change, 0.3)
+    
+    def pointerInteraction_willExitRegion_animator_(_self, _cmd, _interaction, _region, _animator):
+        self = ObjCInstance(_self)
+        bnt = self.delegate_methods['pointerInteraction_willExitRegion_animator_']
+        
+        def bnt_change():
+            bnt.transform = ui.Transform.scale(1.0, 1.0).concat(ui.Transform.rotation(0))
+        
+        ui.animate(bnt_change, 0.3)
+        
+    
+                                     
 #docgen: Drag and drop                                
         
 @on_main_thread
@@ -916,7 +950,6 @@ def drag(view, payload, allow_others=False):
     """
     
     UIDragInteractionDelegate(view, payload, allow_others)
-    
 @on_main_thread
 def drop(view, action, accept=None, animation_func=None, onBegin_func=None):
     """ Sets the `view` as a drop target, calling the `action` function with
@@ -949,9 +982,12 @@ def drop(view, action, accept=None, animation_func=None, onBegin_func=None):
     """
     UIDropInteractionDelegate(view, action, accept, animation_func, onBegin_func)
 
-'''
-if __name__ == '__main__':
+@on_main_thread
+def UIPointer(view, delegate_methods):
+    UIPointerInteractionDelegate(view, delegate_methods)
 
+if __name__ == '__main__':
+    
     import math, random, console
 
     bg = ui.View(background_color='black')
@@ -999,6 +1035,7 @@ if __name__ == '__main__':
     
     drag_image_l = create_label('Drag image')
     drop_image_l = create_label('Image drop')
+    interaction = create_label('Hover over')
     
     drag(drag_image_l, 'ui')
     
@@ -1007,6 +1044,13 @@ if __name__ == '__main__':
         
     def image_dropped(data, sender, receiver):
         print(sender, receiver)
-        
+    
+    def wah(_self, _cmd, _interaction, _region, *args, **kwargs):
+        print(args, kwargs)
+        return None
+    
     drop(drop_image_l, image_dropped, accept=str, animation_func=lambda: this_works('Both so dumb', '!!!'), onBegin_func=lambda: this_works('ahah', 'yay'))
-'''
+    
+    
+    UIPointer(interaction, methods)
+             
