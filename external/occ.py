@@ -7,6 +7,7 @@ import console
 
 """
 OfflineCacheConstructor file, used for when offline mode is used within SiP.
+self note: Try not to edit this again because making this was the hardest thing I have ever programmed (aside from learning the syntax of Obj-C 😂)
 """
 
 class OfflineCacheConstructor:
@@ -16,7 +17,7 @@ class OfflineCacheConstructor:
         self.files = None
         self._c_handler = cache_handler
         
-    def get_content(self, path: str='', dataset: dict=None, return_error=True, boolean=False, _old_name='root') -> Union[bool, dict, None]:
+    def get_content(self, path: str='', dataset: dict=None, return_error=True, boolean=False, _old_name='root', _identifier=None) -> Union[bool, dict, None]:
         
         dirs = path.split('/')
         x = None
@@ -29,7 +30,7 @@ class OfflineCacheConstructor:
                 
             if dirs[0] in (dataset if type(dataset) == dict else (dataset[x] if x else [])):
 
-                return self.get_content('/'.join(dirs[1:]), dataset.get(dirs[0]) if type(dataset) == dict else dataset[x].get(dirs[0]), return_error, boolean, dirs[0]) if not boolean else True
+                return self.get_content('/'.join(dirs[1:]), dataset.get(dirs[0]) if type(dataset) == dict else dataset[x].get(dirs[0]), return_error, boolean, dirs[0], _identifier) if not boolean else True
                 
             else:
                 
@@ -54,7 +55,7 @@ class OfflineCacheConstructor:
             where = ""
             
             for i, fd in enumerate(folders, start=n): # For each new folder in folders
-                dir_contents = self.get_content('/'.join(folders[:i-1]), dataset, return_error=False)
+                dir_contents = self.get_content('/'.join(folders[:i-1]), dataset, return_error=False, _identifier='1')
                 dir_contents = dir_contents if type(dir_contents) == dict else dir_contents[1]
                 
                 if fd not in dir_contents:
@@ -65,7 +66,7 @@ class OfflineCacheConstructor:
                     break
             
             if flag: # if any folders have been made
-                data = self.get_content(where, dataset)
+                data = self.get_content(where, dataset, _identifier='2')
                 try:
                     data[folders[n-1]] = [[], self._build_tree(folders[n:])] # Adds a new folder to the path
                 except TypeError:
@@ -79,7 +80,7 @@ class OfflineCacheConstructor:
     def dump_at_location(self, file: str, location: str, table: dict):
         
         location += '/' # Appends a slash at the end of the path
-        dir = self.get_content(path=location, dataset=table) # Gets the contents of the given folder
+        dir = self.get_content(path=location, dataset=table, _identifier='3') # Gets the contents of the given folder
         dir.append(file) # Appends the filename to the folder contents (dir)
         
         return table
@@ -130,9 +131,10 @@ class OfflineCacheConstructor:
     
         self.files = self._final_dict # This is the return value.
         return True
-        
-    def change_cache_index(self, mode: str=None, ids: list=[], *args):
-        cache_file = open(self.cache_file, 'r+')
+     
+    @staticmethod   
+    def change_cache_index(cache: str='occ.json', mode: str=None, ids: list=[], *args):
+        cache_file = open(cache, 'r+')
         cache_contents: dict = _json.loads(cache_file.read())
         cache_file.truncate(0)
         cache_file.close()
@@ -147,7 +149,7 @@ class OfflineCacheConstructor:
         elif mode == 'ap':
             for ind, id in enumerate(ids):
                 cache_contents[str(id)] = [args[0][ind][0], args[0][ind][1]]
-                
-        new_cache_file = open(self.cache_file, 'w')    
+        
+        new_cache_file = open(cache, 'w')    
         _json.dump(cache_contents, new_cache_file, indent=5)
         new_cache_file.close()
