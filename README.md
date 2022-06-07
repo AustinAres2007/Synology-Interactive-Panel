@@ -32,6 +32,10 @@ Though use it if you please, but be warned this is not made by a professional.
   1. Password  >  Whatever the password is for the user you want to use
   
   1. root  >  Name of the root of the NAS, mine is /Volume, yours maybe different. 
+  
+  1. Note: If the URL / IP you enter stops working suddenly, that probably means your IP changed.
+    To find new one, while within the local network of the nas, just search "What is my IP?"
+    and you will most likely find it.
 
 ## Prerequisites
   
