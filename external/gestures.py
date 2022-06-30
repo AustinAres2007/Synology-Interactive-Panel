@@ -181,33 +181,53 @@ import inspect
 import os
 import os.path
 import types
-
 import ui
+import dialogs
+
+from sys import exit
+from external.menu import Menu, Action
+from shutil import rmtree
 from objc_util import *
 from math import pi
 
-# Recognizer classes
-
-UITapGestureRecognizer = ObjCClass('UITapGestureRecognizer')
-UILongPressGestureRecognizer = ObjCClass('UILongPressGestureRecognizer')
-UIPanGestureRecognizer = ObjCClass('UIPanGestureRecognizer')
-UIScreenEdgePanGestureRecognizer = ObjCClass('UIScreenEdgePanGestureRecognizer')
-UIPinchGestureRecognizer = ObjCClass('UIPinchGestureRecognizer')
-UIRotationGestureRecognizer = ObjCClass('UIRotationGestureRecognizer')
-UISwipeGestureRecognizer = ObjCClass('UISwipeGestureRecognizer')
-UIPointerInteraction = ObjCClass('UIPointerInteraction')
-
-#  Drag and drop classes
-
-NSItemProvider = ObjCClass('NSItemProvider')
-UIDragItem = ObjCClass('UIDragItem')
-UIDragInteraction = ObjCClass('UIDragInteraction')
-UIDropInteraction = ObjCClass('UIDropInteraction')
-UIDropProposal = ObjCClass('UIDropProposal')
-NSItemProvider = ObjCClass('NSItemProvider')
-UIImagePNGRepresentation = c.UIImagePNGRepresentation
-UIImagePNGRepresentation.restype = c_void_p
-UIImagePNGRepresentation.argtypes = [c_void_p]
+# Recognizer classes (Mickael)
+try:
+    UITapGestureRecognizer = ObjCClass('UITapGestureRecognizer')
+    UILongPressGestureRecognizer = ObjCClass('UILongPressGestureRecognizer')
+    UIPanGestureRecognizer = ObjCClass('UIPanGestureRecognizer')
+    UIScreenEdgePanGestureRecognizer = ObjCClass('UIScreenEdgePanGestureRecognizer')
+    UIPinchGestureRecognizer = ObjCClass('UIPinchGestureRecognizer')
+    UIRotationGestureRecognizer = ObjCClass('UIRotationGestureRecognizer')
+    UISwipeGestureRecognizer = ObjCClass('UISwipeGestureRecognizer')
+    
+    # PointerIntergration (Austin)
+    UIPointerInteraction = ObjCClass('UIPointerInteraction')
+    
+    # For Image Picker (Austin)
+    SUIViewController = ObjCClass('SUIViewController')
+    UIImagePickerController = ObjCClass('UIImagePickerController')    
+    
+    # For File Picker (Austin)
+    UIDocumentPickerViewController = ObjCClass('UIDocumentPickerViewController')
+    UTType = ObjCClass('UTType')
+    
+    # For EditMenus (Legacy & Modern) (Austin)
+    UIEditMenuInteraction = ObjCClass('UIEditMenuInteraction')
+    UIEditMenuConfiguration = ObjCClass('UIEditMenuConfiguration')
+    UIMenuController = ObjCClass('UIMenuController')
+    
+    #  Drag and drop classes (Mickael)
+    NSItemProvider = ObjCClass('NSItemProvider')
+    UIDragItem = ObjCClass('UIDragItem')
+    UIDragInteraction = ObjCClass('UIDragInteraction')
+    UIDropInteraction = ObjCClass('UIDropInteraction')
+    UIDropProposal = ObjCClass('UIDropProposal')
+    NSItemProvider = ObjCClass('NSItemProvider')
+    UIImagePNGRepresentation = c.UIImagePNGRepresentation
+    UIImagePNGRepresentation.restype = c_void_p
+    UIImagePNGRepresentation.argtypes = [c_void_p]
+except:
+    console.alert("iOS / iPadOS 16 / macOS Ventura (macOS 13) or newer is needed to run SiP. \n(NOTE: SiP is not programmed for iPhones nor mac, but do work, pretty well on macOS as well.)"); exit(1)
 
 # Constants
 
@@ -773,6 +793,13 @@ class UIDragInteractionDelegate(ObjCDelegate):
             str(id(self.content_actual)))
         object_array = NSArray.arrayWithObject(item)
         return object_array.ptr
+    
+    def dragInteraction_sessionDidMove_(_self, _cmd, _interaction, _session):
+        session = ObjCInstance(_session)
+        self = ObjCInstance(_self)
+        CGPoint_loc = session.locationInView_(self.view)
+    
+        
         
 
 class UIDropInteractionDelegate(ObjCDelegate):
@@ -780,7 +807,6 @@ class UIDropInteractionDelegate(ObjCDelegate):
     
     def __init__(self, view, handler_func, accept, animation_func, onBegin_func):
         
-        #print('eeeee',self)
         if type(accept) is type:
             if accept is str:
                 self.accept_type = NSString
@@ -909,7 +935,7 @@ class UIPointerInteractionDelegate(ObjCDelegate):
         bnt = self.delegate_methods['pointerInteraction_willEnterRegion_animator_']
         
         def bnt_change():
-            bnt.transform = ui.Transform.scale(1.025, 1.025).concat(ui.Transform.rotation(pi/48))
+            bnt.transform = ui.Transform.scale(1.07, 1.07)#.concat(ui.Transform.rotation(pi/50))
         
         ui.animate(bnt_change, 0.3)
     
@@ -918,79 +944,122 @@ class UIPointerInteractionDelegate(ObjCDelegate):
         bnt = self.delegate_methods['pointerInteraction_willExitRegion_animator_']
         
         def bnt_change():
-            bnt.transform = ui.Transform.scale(1.0, 1.0).concat(ui.Transform.rotation(0))
+            bnt.transform = ui.Transform.scale(1.0, 1.0)#.concat(ui.Transform.rotation(0))
         
         ui.animate(bnt_change, 0.3)
+
+class SiPImagePicker(ObjCDelegate):
+    def __init__(self, sip):
+        viewController_objc = ObjCInstance(sip)
         
-    
-                                     
+        ImgPicker = UIImagePickerController.alloc().init()
+        ImgPicker.allowsEditing = True
+        ImgPicker.sourceType = 0
+        ImgPicker.allowsMultipleSelection = True
+            
+        ImgPicker.setDelegate_(self)
+        
+        viewController = SUIViewController.viewControllerForView_(viewController_objc)
+        viewController.presentModalViewController_animated_(ImgPicker, True)
+        
+        self.sip = sip
+        retain_global(self)
+        
+        
+    def imagePickerController_didFinishPickingMediaWithInfo_(_self, _cmd, _picker, _info):
+        
+        self = ObjCInstance(_self)
+        picker = ObjCInstance(_picker)
+        info = ObjCInstance(_info)
+        
+        img = info['UIImagePickerControllerEditedImage']
+            
+        func = c.UIImageJPEGRepresentation
+        func.argtypes = [ctypes.c_void_p, ctypes.c_float]
+        func.restype = ctypes.c_void_p
+        
+        x = ObjCInstance(func(img.ptr, 1.0))
+        x.writeToFile_atomically_(f'{img.ptr}.png', True)
+        
+        picker.setDelegate_(None)
+        self.release()
+        picker.dismissViewControllerAnimated_completion_(True, None)
+        
+        self.sip.nas.upload_file(self.sip.name, f'{img.ptr}.png')
+        
+        os.remove(f'{img.ptr}.png')   
+
+class SiPDocumentPicker(ObjCDelegate):
+    def __init__(self, view):
+        
+        file_ext = UTType.typeWithIdentifier_('public.item')
+        items = NSArray.arrayWithObject(file_ext)
+        
+        viewController_objc = ObjCInstance(view)
+        document_picker = UIDocumentPickerViewController.alloc().initForOpeningContentTypes_(items)
+        document_picker.shouldShowFileExtensions = True
+        
+        
+        viewController = SUIViewController.viewControllerForView_(viewController_objc)
+        viewController.presentModalViewController_animated_(document_picker, True)
+        
+        retain_global(self)
+        
+    def documentPicker_didPickDocumentsAtURLs_(_self, _cmd, _controller, _urls):
+        urls = ObjCInstance(_urls)
+ 
+"""
+This class should be able to display the edit context menu (UIMenuEditInteraction)
+This is a beta feature for iOS 16+ and currently does not work for me. I do not know
+if it does not work in general or if it my programming or the bridge between Python and Obj-C
+"""
+class UIMenuEditInt(ObjCDelegate):
+    def __init__(self, view):
+        EditInteraction = UIEditMenuInteraction.alloc().initWithDelegate(self)
+        view.objc_instance.addInteraction(EditInteraction)
+        
+        self.edit_interaction = EditInteraction
+        retain_global(self)
+        
+    def editMenuInteraction_menuForConfiguration_suggestedActions_(_self, _cmd, _interactions, _config, _actions):  
+        button = ObjCInstance(_interactions)
+        
+        return Menu(button, [Action(title='Test', handler=None)], long_press=True)             
+        
 #docgen: Drag and drop                                
         
 @on_main_thread
 def drag(view, payload, allow_others=False):
-    """ Sets the `view` to be the sender in a drag and drop operation. Dragging
-    starts with a long press.
-    
-    For within-app drag and drop, `payload` can be anything, and it is passed
-    by reference.
-    
-    If the `payload` is a text string or a `ui.Image`, it can be dragged
-    (copied) to another app (on iPad).
-    There is also built-in support for dropping text to any `ui.TextField` or
-    `ui.TextView`. 
-    
-    If `payload` is a function, it is called at the time when the drag starts.
-    The function receives one argument, the sending `view`, and must return the
-    data to be dragged.
-
-    Additional parameters:
-
-    * `allow_others` - Set to True if other gestures attached to the view
-    should be prioritized over the dragging.
-    """
-    
     UIDragInteractionDelegate(view, payload, allow_others)
+    
 @on_main_thread
 def drop(view, action, accept=None, animation_func=None, onBegin_func=None):
-    """ Sets the `view` as a drop target, calling the `action` function with
-    dropped data.
-    
-    Additional parameters:
-
-    * `accept` - Control which data will be accepted for dropping. Simplest
-    option is to provide an accepted Python type like `dict` or `ui.Label`.
-    
-      For cross-app drops, only two types are currently supported: `str` for
-      plain text, and `ui.Image` for images.
-      
-      For in-app drops, the `accept` argument can also be a function that will
-      be called when a drag enters the view. Function gets same parameters
-      as the main handler, and should return False if the view should not accept
-      the drop.
-    
-    `action` function has to have this signature:
-        
-        def handle_drop(data, sender, receiver):
-            ...
-            
-    Arguments of the `action` function are:
-            
-    * `data` - The dragged data.
-    * `sender` - Source view of the drag and drop. This is `None` for drags
-    between apps.
-    * `receiver` - Same as `view`.
-    """
     UIDropInteractionDelegate(view, action, accept, animation_func, onBegin_func)
 
 @on_main_thread
 def UIPointer(view, delegate_methods):
     UIPointerInteractionDelegate(view, delegate_methods)
 
+@on_main_thread
+def import_file_fix(view):
+    SiPDocumentPicker(view)
+
+@on_main_thread
+def ui_edit_menu(view):
+    return UIMenuEditInt(view)
+      
+@on_main_thread
+def ImagePickerDialogue(nas):
+    SiPImagePicker(nas)
+
+
 if __name__ == '__main__':
     
     import math, random, console
-
-    bg = ui.View(background_color='black')
+    
+  
+    
+    bg = ui.View(background_color='green')
     bg.present('fullscreen', hide_title_bar=True)
 
     tap(bg, 'close', number_of_touches_required=2)
@@ -1003,6 +1072,7 @@ if __name__ == '__main__':
 
     def create_label(title, instance=None):
         global label_count
+        
         label_count += 1
         label_w = 175
         label_h = 75
@@ -1015,7 +1085,7 @@ if __name__ == '__main__':
         column = label_count - line * labels_per_line
 
         if instance is None:
-            instance = ui.Label(
+            instance = ui.Button(
                 text=title,
                 text_color='white',
                 alignment=ui.ALIGN_CENTER,
@@ -1033,24 +1103,26 @@ if __name__ == '__main__':
         v.add_subview(instance)
         return instance
     
-    drag_image_l = create_label('Drag image')
-    drop_image_l = create_label('Image drop')
     interaction = create_label('Hover over')
-    
-    drag(drag_image_l, 'ui')
-    
-    def this_works(text, secondary):
-        print(text, secondary)
+    c_menu = create_label('Context Menu')
         
-    def image_dropped(data, sender, receiver):
-        print(sender, receiver)
     
-    def wah(_self, _cmd, _interaction, _region, *args, **kwargs):
-        print(args, kwargs)
-        return None
+    edit_menu = ui_edit_menu(c_menu)
     
-    drop(drop_image_l, image_dropped, accept=str, animation_func=lambda: this_works('Both so dumb', '!!!'), onBegin_func=lambda: this_works('ahah', 'yay'))
+    def long_press_menu(*args):
+        location = args[0][-1].location
+        
+        loc = CGPoint(location.x, location.y)
+        config = UIEditMenuConfiguration.configurationWithIdentifier_sourcePoint_(None, loc)
+        edit_menu.edit_interaction.presentEditMenuWithConfiguration_(config)
+        
+    long_press(c_menu, lambda *args: long_press_menu(args), minimum_press_duration=.5)
     
     
-    UIPointer(interaction, methods)
-             
+#import_file_fix()
+    
+    
+
+    
+    
+

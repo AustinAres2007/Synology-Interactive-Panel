@@ -1,0 +1,9 @@
+This is a normal text file, no need for any sort of syntax / formatting.
+
+I will list the files within this directory and their purpose (Will be oversimplifying them quite a bit, not a full breakdown on how they work).
+    - occ.py *Used for offline mode within SiP (Made by me)
+    - menu.py *Used for the context actions when holding a file (Made by Mikaelho on GitHub, taken from their ui3 repo)
+    - guestures.py *Used for guestures within SiP (Made by Mikaelho on GitHub, taken from their ui3 repo)
+    -sfsymbols.py *Used for symbols used within the context menus and general UI (Made by Mikaelho on GitHub, taken from their ui3 repo)
+    
+Note for sfsymbols: You can use Mikaelho's SFSymbol browser, or use the apple app, it is not on the app store but it's a DMG file, forgotten the name. It is in beta.
