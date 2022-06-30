@@ -1,5 +1,5 @@
 # Synology-Interactive-Panel
-## Made for Pythonista on iPad Pro 11″ 
+## Made for Pythonista on iPad Pro 11″ (iOS 16 ONLY)
 
 I do not expect this to be used by anyone, and am saving this here purely for my own purposes.
 
