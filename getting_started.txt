@@ -1,0 +1,22 @@
+To start SiP. Follow these steps (Note: I do recommend you have experience with Python / Synology stuff to use this script, but I will try to make it as easy as I can to use and follow)
+
+To start, open sip-config.cfg (In the same folder as this file)
+go to line 20, where it says "login" and within the list of values, replace them in this order with your details.
+    URL (Example: yournas.synology.me or just the IP address of where your NAS is hosted)
+    Port (Example: the default port for synology nas' is 5001, 5000 also works but is not HTTP. So you should just be able to leave the port alone)
+    User (Example: The user you use to login to the NAS with)
+    Password (Example: The password of the user you chose)
+    Root (Example: The root is where the SiP will first put you when it starts. It has to be a full path. So something like this "/Volume/Photos/Cats" will be valid, which also means you can just use /Volume as the root. If the root is invalid, SiP will let you know, and of course, the path is case-sensitive.)
+
+open sip.py, press the "Play" button in the top right. And pray it runs!!
+
+~ Some other technical details ~
+
+each JSON key in occ.json is formatted like this:
+    "{ID}": [
+        "{folder_path}",
+        "{ID}-{filename}"
+    ]
+    
+The ID is calulated from two numbers, the timestamp, and the size of the file. I'm not going to explain how to find those values out because I actually don't know how to without code. (Actual formula: timestamp+size)
+        
