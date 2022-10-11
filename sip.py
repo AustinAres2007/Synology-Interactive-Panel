@@ -1107,3 +1107,5 @@ if __name__ == '__main__':
 
     View.connect() # Establish connection to NAS
     View.present('fullscreen', hide_close_button=True, title_bar_color=cfg[mode]['tb_color'], title_color=cfg[mode]['fl_color']) # Display initialised screen content
+
+# Finished as of 11 Oct, 2022
